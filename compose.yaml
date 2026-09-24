@@ -1,0 +1,6 @@
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"

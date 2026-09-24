@@ -1,0 +1,45 @@
+@page {
+    size: A4;
+    margin: 5mm 18.5mm 50mm;
+}
+
+* { box-sizing: border-box; }
+html { font-family: Arial, sans-serif; color: #111; }
+body { margin: 0; font-size: 10.5pt; line-height: 1.22; }
+strong { font-weight: 700; }
+
+.letterhead { min-height: 48mm; display: flex; justify-content: flex-end; align-items: flex-start; padding-top: 8mm; }
+.brand-logo { max-width: 58mm; max-height: 22mm; }
+.brand-name { max-width: 75mm; font-size: 24pt; line-height: 1.05; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+.sender-line { font-size: 7.5pt; color: #555; margin-bottom: 5mm; overflow-wrap: anywhere; }
+.address-block { min-height: 30mm; position: relative; break-inside: avoid; }
+.recipient { max-width: 92mm; overflow-wrap: anywhere; }
+.recipient strong { font-weight: 400; }
+.invoice-date { text-align: right; margin-top: 4mm; overflow-wrap: anywhere; }
+.invoice-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm 5mm; margin: 3mm 0 4mm; }
+.fact { display: grid; grid-template-columns: 52% 48%; align-content: start; min-width: 0; break-inside: avoid; }
+.fact strong, .fact span { overflow-wrap: anywhere; }
+.fact strong { margin-right: 1mm; }
+.fact-stacked { display: block; }
+.fact-stacked span { display: block; margin-top: 1mm; }
+.fact-wide { grid-column: 1 / -1; display: flex; gap: 1mm; }
+.intro { margin: 0 0 5mm; break-inside: avoid; overflow-wrap: anywhere; }
+.service-heading { font-size: 10.5pt; margin: 0 0 4mm; break-after: avoid; }
+
+.items { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.description-col { width: 65%; }
+.quantity-col { width: 12%; }
+.price-col { width: 11%; }
+.total-col { width: 12%; }
+.items thead { display: table-header-group; }
+.items th { text-align: left; border-bottom: .8mm solid #999; padding: 0 0 1.5mm; font-size: 10pt; }
+.items td { vertical-align: top; padding: .65mm 0; font-size: 9pt; }
+.items th, .items td { overflow-wrap: anywhere; word-break: break-word; }
+.items .num { text-align: right; }
+.items tr { break-inside: avoid; page-break-inside: avoid; }
+
+.invoice-totals { margin-top: 7mm; break-inside: avoid; page-break-inside: avoid; }
+.total-row { display: flex; justify-content: space-between; gap: 5mm; padding: 1mm 0; }
+.total-row span:last-child, .total-row strong:last-child { text-align: right; }
+.grand-total { border-top: .7mm solid #999; padding-top: 2mm; margin-top: 1mm; }
+.payment-info { margin-top: 8mm; break-inside: avoid; page-break-inside: avoid; overflow-wrap: anywhere; }
