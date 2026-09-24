@@ -36,6 +36,7 @@ $period = $invoice['period'] ?? (isset($invoice['service_date']) ? $date($invoic
         <?php if (!empty($invoice['occasion'])): ?><div class="fact"><strong>Anlass/Einsatzort:</strong><span><?= nl2br($e($invoice['occasion'])) ?></span></div><?php endif; ?>
         <div class="fact fact-stacked"><strong>Rechnungsnummer:</strong><span><?= $e($invoice['number']) ?></span></div>
         <?php if (!empty($invoice['project'])): ?><div class="fact"><strong>Kostenstelle/Projekt:</strong><span><?= $e($invoice['project']) ?></span></div><?php endif; ?>
+        <?php if (!empty($invoice['buyer_reference'])): ?><div class="fact"><strong>Ihre Referenz:</strong><span><?= $e($invoice['buyer_reference']) ?></span></div><?php endif; ?>
         <?php if (!empty($invoice['orderer'])): ?><div class="fact fact-wide"><strong>Besteller:</strong><span><?= $e($invoice['orderer']) ?></span></div><?php endif; ?>
     </section>
 
@@ -60,9 +61,10 @@ $period = $invoice['period'] ?? (isset($invoice['service_date']) ? $date($invoic
     <section class="invoice-totals" aria-label="Rechnungssummen">
         <div class="total-row"><span>Summe netto</span><span><?= $money($invoice['totals']['net_cents']) ?></span></div>
         <?php foreach ($invoice['taxes'] as $tax): ?>
-            <div class="total-row"><span>zzgl. USt. <?= $quantity($tax['rate']) ?> %</span><span><?= $money($tax['amount_cents']) ?></span></div>
+            <div class="total-row"><span><?= isset($tax['label']) ? $e($tax['label']) : 'zzgl. USt. ' . $quantity($tax['rate']) . ' %' ?></span><span><?= $money($tax['amount_cents']) ?></span></div>
         <?php endforeach; ?>
         <div class="total-row grand-total"><span>Gesamtbetrag</span><strong><?= $money($invoice['totals']['gross_cents']) ?></strong></div>
+        <?php if (!empty($invoice['tax_note'])): ?><p class="tax-note"><?= nl2br($e($invoice['tax_note'])) ?></p><?php endif; ?>
     </section>
 
     <section class="payment-info">

@@ -1,0 +1,33 @@
+{
+    "name": "belegwerk/belegwerk",
+    "description": "Leichtgewichtige API für PDF-Dokumente und E-Rechnungen (XRechnung, ZUGFeRD/Factur-X) auf Basis von Gotenberg.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "ext-curl": "*",
+        "ext-dom": "*",
+        "ext-fileinfo": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Belegwerk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Belegwerk\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "serve": "@php -S 127.0.0.1:8080 -t public",
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

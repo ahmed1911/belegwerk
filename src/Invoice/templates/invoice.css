@@ -43,3 +43,4 @@ strong { font-weight: 700; }
 .total-row span:last-child, .total-row strong:last-child { text-align: right; }
 .grand-total { border-top: .7mm solid #999; padding-top: 2mm; margin-top: 1mm; }
 .payment-info { margin-top: 8mm; break-inside: avoid; page-break-inside: avoid; overflow-wrap: anywhere; }
+.tax-note { margin: 3mm 0 0; font-size: 9pt; overflow-wrap: anywhere; }

@@ -2,9 +2,18 @@
 
 declare(strict_types=1);
 
+namespace Belegwerk\Invoice;
+
+use Belegwerk\Gotenberg\GotenbergClient;
+use DateTimeInterface;
+use finfo;
+use InvalidArgumentException;
+use RuntimeException;
+use Throwable;
+
 final class InvoicePdfService
 {
-    public function __construct(private readonly ?string $gotenbergUrl = null)
+    public function __construct(private readonly GotenbergClient $gotenberg = new GotenbergClient())
     {
     }
 
@@ -12,91 +21,77 @@ final class InvoicePdfService
      * All money values are already calculated integer cents. Dates are DateTimeInterface.
      * Required: number, date, due_date, company, customer, bank, items, taxes, totals.
      * company/customer: name, address (array of lines); company also: legal (array of lines),
-     * optional logo_path (local PNG/JPEG/SVG). bank: holder, iban, optional bic, name.
+     * optional logo_path (local PNG/JPEG/SVG) or logo_data (raw image bytes). bank: holder, iban, optional bic, name.
      * items: description, quantity (up to 3 decimals), unit, unit_price_cents, total_cents.
      * taxes: rate (percent), base_cents, amount_cents. totals: net_cents, gross_cents.
      * Optional layout fields: service_date (DateTimeInterface), period, occasion,
-     * project, orderer, section_title, note; company.city.
+     * project, orderer, buyer_reference, section_title, note, tax_note; company.city;
+     * taxes[].label (overrides the default "zzgl. USt. x %" label).
      */
-    public function renderPdf(array $invoice): string
+    /**
+     * @param array<string, string> $fields  zusätzliche Gotenberg-Felder (z. B. pdfa, metadata)
+     * @param list<array{name: string, mime: string, content: string}> $embeds  Dateianhänge im PDF
+     */
+    public function renderPdf(array $invoice, array $fields = [], array $embeds = []): string
     {
-        $url = $this->gotenbergUrl ?? (getenv('GOTENBERG_URL') ?: 'http://127.0.0.1:3000');
-        if (!is_string($url) || trim($url) === '') {
-            throw new InvalidArgumentException('GOTENBERG_URL ist nicht konfiguriert.');
+        $this->validate($invoice);
+        $logo = $this->loadLogo($invoice['company']);
+
+        $css = file_get_contents(__DIR__ . '/templates/invoice.css');
+        if ($css === false) {
+            throw new RuntimeException('Das Rechnungs-CSS konnte nicht gelesen werden.');
         }
 
-        $this->validate($invoice);
-        $logo = null;
-        $logoName = null;
+        $files = [
+            ['name' => 'index.html', 'mime' => 'text/html; charset=UTF-8', 'content' => $this->renderHtml($invoice, $logo['name'] ?? null)],
+            ['name' => 'invoice.css', 'mime' => 'text/css; charset=UTF-8', 'content' => $css],
+            ['name' => 'footer.html', 'mime' => 'text/html; charset=UTF-8', 'content' => $this->renderFooter($invoice)],
+        ];
+        if ($logo !== null) {
+            $files[] = $logo;
+        }
 
-        if (!empty($invoice['company']['logo_path'])) {
-            $path = $invoice['company']['logo_path'];
+        return $this->gotenberg->convertHtml($files, $fields + [
+            'preferCssPageSize' => 'true',
+            'printBackground' => 'true',
+            'failOnResourceLoadingFailed' => 'true',
+        ], $embeds);
+    }
+
+    /** @return array{name: string, mime: string, content: string}|null */
+    private function loadLogo(array $company): ?array
+    {
+        if (isset($company['logo_data'])) {
+            $logo = $company['logo_data'];
+            if (!is_string($logo) || $logo === '') {
+                throw new InvalidArgumentException('company.logo_data muss Bilddaten enthalten.');
+            }
+        } elseif (!empty($company['logo_path'])) {
+            $path = $company['logo_path'];
             if (!is_string($path) || !is_file($path) || !is_readable($path)) {
                 throw new InvalidArgumentException('Das Rechnungslogo ist nicht lesbar.');
-            }
-            $mime = mime_content_type($path);
-            $extensions = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/svg+xml' => 'svg'];
-            if (!isset($extensions[$mime])) {
-                throw new InvalidArgumentException('Das Rechnungslogo muss PNG, JPEG oder SVG sein.');
             }
             $logo = file_get_contents($path);
             if ($logo === false) {
                 throw new RuntimeException('Das Rechnungslogo konnte nicht gelesen werden.');
             }
-            $logoName = 'invoice-logo.' . $extensions[$mime];
+        } else {
+            return null;
         }
 
-        $html = $this->renderHtml($invoice, $logoName);
-        $css = file_get_contents(__DIR__ . '/invoice.css');
-        if ($css === false) {
-            throw new RuntimeException('Das Rechnungs-CSS konnte nicht gelesen werden.');
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->buffer($logo);
+        $extensions = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/svg+xml' => 'svg'];
+        if (!isset($extensions[$mime])) {
+            throw new InvalidArgumentException('Das Rechnungslogo muss PNG, JPEG oder SVG sein.');
         }
-
-        $boundary = 'invoice-' . bin2hex(random_bytes(16));
-        $parts = [
-            $this->filePart($boundary, 'index.html', 'text/html; charset=UTF-8', $html),
-            $this->filePart($boundary, 'invoice.css', 'text/css; charset=UTF-8', $css),
-            $this->filePart($boundary, 'footer.html', 'text/html; charset=UTF-8', $this->renderFooter($invoice)),
-        ];
-        if ($logo !== null) {
-            $parts[] = $this->filePart($boundary, $logoName, $mime, $logo);
-        }
-        $parts[] = "--{$boundary}\r\nContent-Disposition: form-data; name=\"preferCssPageSize\"\r\n\r\ntrue\r\n";
-        $parts[] = "--{$boundary}\r\nContent-Disposition: form-data; name=\"printBackground\"\r\n\r\ntrue\r\n";
-        $parts[] = "--{$boundary}\r\nContent-Disposition: form-data; name=\"failOnResourceLoadingFailed\"\r\n\r\ntrue\r\n";
-        $body = implode('', $parts) . "--{$boundary}--\r\n";
-
-        $curl = curl_init(rtrim($url, '/') . '/forms/chromium/convert/html');
-        if ($curl === false) {
-            throw new RuntimeException('Gotenberg-Anfrage konnte nicht vorbereitet werden.');
-        }
-        curl_setopt_array($curl, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => ["Content-Type: multipart/form-data; boundary={$boundary}", 'Accept: application/pdf'],
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => 60,
-        ]);
-        $pdf = curl_exec($curl);
-        $status = curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
-        $error = curl_error($curl);
-        curl_close($curl);
-
-        if ($pdf === false) {
-            throw new RuntimeException('Gotenberg ist nicht erreichbar: ' . $error);
-        }
-        if ($status !== 200 || !str_starts_with($pdf, '%PDF-')) {
-            throw new RuntimeException('Gotenberg konnte die Rechnung nicht rendern (HTTP ' . $status . '): ' . substr(trim($pdf), 0, 500));
-        }
-        return $pdf;
+        return ['name' => 'invoice-logo.' . $extensions[$mime], 'mime' => $mime, 'content' => $logo];
     }
 
     private function renderHtml(array $invoice, ?string $logoName): string
     {
         ob_start();
         try {
-            require __DIR__ . '/invoice.php';
+            require __DIR__ . '/templates/invoice.php';
             return (string) ob_get_clean();
         } catch (Throwable $error) {
             ob_end_clean();
@@ -124,11 +119,6 @@ final class InvoicePdfService
             . '</div></body></html>';
     }
 
-    private function filePart(string $boundary, string $name, string $mime, string $content): string
-    {
-        return "--{$boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{$name}\"\r\nContent-Type: {$mime}\r\n\r\n{$content}\r\n";
-    }
-
     private function validate(array $invoice): void
     {
         foreach (['number', 'date', 'due_date', 'company', 'customer', 'bank', 'items', 'taxes', 'totals'] as $key) {
@@ -150,7 +140,7 @@ final class InvoicePdfService
         if (isset($invoice['note']) && !is_string($invoice['note'])) {
             throw new InvalidArgumentException('note muss Text sein.');
         }
-        foreach (['period', 'occasion', 'project', 'orderer', 'section_title'] as $key) {
+        foreach (['period', 'occasion', 'project', 'orderer', 'buyer_reference', 'section_title', 'tax_note'] as $key) {
             if (isset($invoice[$key]) && !is_string($invoice[$key])) {
                 throw new InvalidArgumentException("{$key} muss Text sein.");
             }
@@ -203,7 +193,8 @@ final class InvoicePdfService
         }
         foreach ($invoice['taxes'] as $tax) {
             if (!is_array($tax) || !isset($tax['rate'], $tax['base_cents'], $tax['amount_cents'])
-                || !is_numeric($tax['rate']) || !is_int($tax['base_cents']) || !is_int($tax['amount_cents'])) {
+                || !is_numeric($tax['rate']) || !is_int($tax['base_cents']) || !is_int($tax['amount_cents'])
+                || (isset($tax['label']) && !is_string($tax['label']))) {
                 throw new InvalidArgumentException('Ein Steuersatz ist unvollständig.');
             }
         }
