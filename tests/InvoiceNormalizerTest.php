@@ -48,6 +48,22 @@ final class InvoiceNormalizerTest extends TestCase
         }
     }
 
+    public function testChecksCodesAgainstOfficialCodeLists(): void
+    {
+        $data = self::example();
+        $data['buyer']['address']['country'] = 'XX';
+        $data['buyer']['electronic_address'] = ['scheme' => '9999', 'id' => 'x'];
+        $data['items'][0]['unit_code'] = 'ABC';
+        $data['items'][1]['unit'] = 'KWT';
+
+        try {
+            (new InvoiceNormalizer())->normalize($data);
+            self::fail('ValidationException expected');
+        } catch (ValidationException $error) {
+            self::assertSame(['buyer.electronic_address', 'buyer.address.country', 'items.0.unit_code'], array_keys($error->errors));
+        }
+    }
+
     public function testPassesCustomDataThrough(): void
     {
         $data = self::example();

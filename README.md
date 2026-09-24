@@ -97,8 +97,8 @@ See [`examples/invoice.json`](examples/invoice.json).
 | `items[]` | yes | `description`, `unit_price_cents`, optional `quantity` (default 1, max. 3 decimals), `name`, `unit`, `unit_code`, `tax_rate` (default 19), `tax_category`, `custom` |
 | `custom` | | Free-form data for templates, passed through unchanged |
 
-**Units:** `unit` accepts common German names (`Stk`, `Std`, `Tag`, `Monat`, `pauschal`, `km`, `kg`, …) or a UN/ECE Rec. 20
-code (`H87`, `HUR`, `DAY`, `LS`, …). Other units need a `unit_code`.
+**Units:** `unit` accepts common German names (`Stk`, `Std`, `Tag`, `Monat`, `pauschal`, `km`, `kg`, …) or a UN/ECE Rec. 20/21
+code (`H87`, `HUR`, `DAY`, `LS`, …). Other names need a `unit_code`.
 
 **VAT categories:** `S` (standard, rate > 0), `Z` (zero rated), `E` (exempt), `AE` (reverse charge),
 `K` (intra-community supply), `G` (export). All but `S` require `tax_rate: 0`.
@@ -185,6 +185,14 @@ Tip: render a preview when a user saves a template, so errors show up there and 
 - Twig's sandbox does not limit CPU time or memory. Render with PHP's `max_execution_time` and `memory_limit` in place;
   Gotenberg limits a conversion with `--api-timeout` (default 30s).
 
+## Validating e-invoices
+
+belegwerk checks the input (required fields, tax rules, units, country codes and electronic address schemes against
+the official code lists) and the generated XML against its XSD schema. The complete business rules (EN 16931, BR-DE)
+are Schematron rules that need Java. The test suite runs them for typical invoices. To check every invoice in
+production, run the official [KoSIT validator](https://github.com/itplr-kosit/validator) and connect it through
+horstoeko's `ZugferdKositValidator`, which also supports a remote KoSIT daemon.
+
 ## Not supported (yet)
 
 Allowances and charges, prepayments, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
@@ -193,7 +201,7 @@ e-invoices.
 ## Tested with
 
 - XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note and a negative
-  line: 0 errors with the official Schematron rules EN 16931 CII 1.3.16 and XRechnung 3.0.2
+  line: 0 errors with the official Schematron rules EN 16931 CII 1.3.16 and XRechnung 3.0.2 (part of the test suite)
 - ZUGFeRD PDFs from `invoice()`: PDF/A-3b valid according to veraPDF, embedded XML without Schematron errors
 
 ## Development
@@ -203,6 +211,10 @@ composer install
 docker compose up -d
 composer test          # tests that need Gotenberg are skipped if it is not reachable (GOTENBERG_URL)
 ```
+
+The `schematron` test group validates XRechnung output with the official rules. It needs Java and downloads the rule
+packages from Maven Central once (cached in the system temp directory). Skip it with
+`vendor/bin/phpunit --exclude-group schematron`.
 
 ## License
 

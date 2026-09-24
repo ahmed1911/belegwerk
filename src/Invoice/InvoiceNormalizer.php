@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Belegwerk\Invoice;
 
 use DateTimeImmutable;
+use horstoeko\zugferd\codelistsenum\ZugferdCountryCodes;
+use horstoeko\zugferd\codelistsenum\ZugferdElectronicAddressScheme;
+use horstoeko\zugferd\codelistsenum\ZugferdUnitCodes;
 
 /**
  * Validates invoice data and calculates lines, tax groups and totals.
@@ -211,6 +214,9 @@ final class InvoiceNormalizer
             $this->errors[$prefix . 'electronic_address'] = 'Expected an email address or {"scheme": "0204", "id": "..."}.';
             $electronic = null;
         }
+        if ($electronic !== null && ZugferdElectronicAddressScheme::tryFrom($electronic['scheme']) === null) {
+            $this->errors[$prefix . 'electronic_address'] = "Unknown electronic address scheme \"{$electronic['scheme']}\" (EAS code list).";
+        }
 
         return [
             'name' => $this->requiredString($data, 'name', $prefix),
@@ -230,7 +236,7 @@ final class InvoiceNormalizer
         }
         $prefix = $path . '.';
         $country = strtoupper($this->optionalString($data, 'country', $prefix) ?? 'DE');
-        if (!preg_match('/^[A-Z]{2}$/', $country)) {
+        if (ZugferdCountryCodes::tryFrom($country) === null) {
             $this->errors[$prefix . 'country'] = 'Expected an ISO 3166-1 alpha-2 code, e.g. "DE".';
         }
         return [
@@ -324,17 +330,17 @@ final class InvoiceNormalizer
         $code = $this->optionalString($item, 'unit_code', $prefix);
 
         if ($code === null && $unit !== null) {
-            $code = self::UNIT_ALIASES[mb_strtolower($unit)] ?? (isset(self::UNITS[strtoupper($unit)]) ? strtoupper($unit) : null);
+            $code = self::UNIT_ALIASES[mb_strtolower($unit)] ?? ZugferdUnitCodes::tryFrom(strtoupper($unit))?->value;
             if ($code === null) {
                 $this->errors[$prefix . 'unit_code'] = "Unknown unit \"{$unit}\"; pass a unit_code (UN/ECE Rec. 20, e.g. H87, HUR, LS).";
                 $code = 'H87';
             }
         }
         $code ??= 'H87';
-        if (!preg_match('/^[A-Z0-9]{1,3}$/', $code)) {
-            $this->errors[$prefix . 'unit_code'] = 'Invalid unit code (UN/ECE Rec. 20 expected).';
+        if (ZugferdUnitCodes::tryFrom($code) === null) {
+            $this->errors[$prefix . 'unit_code'] = 'Unknown unit code (UN/ECE Rec. 20/21 expected).';
         }
-        if ($unit === null || isset(self::UNITS[strtoupper($unit)]) && strtoupper($unit) === $code) {
+        if ($unit === null || strtoupper($unit) === $code) {
             $unit = self::UNITS[$code] ?? $code;
         }
         return [$code, $unit];
