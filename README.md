@@ -4,7 +4,7 @@ PHP library that renders PDF documents from Twig templates via [Gotenberg](https
 e-invoices for Germany and the EU:
 
 - **XRechnung 3.0** (UN/CEFACT CII syntax)
-- **ZUGFeRD / Factur-X**: a PDF/A-3b with the invoice XML embedded (profile EN 16931 or XRECHNUNG)
+- **ZUGFeRD / Factur-X**: a PDF/A-3b with the invoice XML embedded (profile EN 16931)
 - **invoice PDFs** and **any other document** (quotes, delivery notes, reminders) from your own templates
 
 It is built for developers of invoicing software whose users design their own templates: templates run in Twig's
@@ -43,20 +43,30 @@ Keep Gotenberg reachable only from your application, never publicly.
 use Belegwerk\Belegwerk;
 use Belegwerk\Template;
 
-$belegwerk = new Belegwerk('http://127.0.0.1:3000');   // Gotenberg URL, optional timeout in seconds (default 60)
+// Master data once: merged into every call, which overrides it field by field (optional: timeout in seconds, default 60)
+$belegwerk = new Belegwerk('http://127.0.0.1:3000', defaults: [
+    'seller' => ['name' => 'Musterfirma GmbH', 'address' => [...], 'vat_id' => 'DE123456789', 'email' => '...', 'phone' => '...'],
+    'bank' => ['holder' => 'Musterfirma GmbH', 'iban' => 'DE89 3704 0044 0532 0130 00'],
+    'custom' => ['logo' => 'data:image/png;base64,...'],
+]);
 
-$pdf = $belegwerk->invoicePdf($invoice);                                          // built-in German layout
-$pdf = $belegwerk->zugferd($invoice);                                             // ZUGFeRD, profile EN 16931
-$pdf = $belegwerk->zugferd($invoice, profile: Belegwerk::PROFILE_XRECHNUNG);      // ZUGFeRD, profile XRECHNUNG
-$xml = $belegwerk->xrechnung($invoice);                                           // XRechnung 3.0 (CII)
+// Invoice: always ZUGFeRD, a normal-looking PDF that also carries the e-invoice XML
+$pdf = $belegwerk->invoice([
+    'number' => 'RE-2026-0042',
+    'date' => '2026-09-24',
+    'due_date' => '2026-10-08',
+    'buyer' => ['name' => 'Beispiel AG', 'address' => ['street' => 'Ring 1', 'zip' => '10115', 'city' => 'Berlin']],
+    'items' => [['description' => 'Beratung', 'quantity' => 2, 'unit' => 'Std', 'unit_price_cents' => 9000]],
+]);
+
+// XRechnung XML, e.g. for German public authorities
+$xml = $belegwerk->xrechnung($invoice);
 
 // Your own template, e.g. loaded from your database
-$template = new Template($html, footer: $footerHtml);
-$pdf = $belegwerk->invoicePdf($invoice, $template);
-$pdf = $belegwerk->zugferd($invoice, $template);
+$pdf = $belegwerk->invoice($invoice, new Template($html, footer: $footerHtml));
 
-// Any other document with free-form data
-$pdf = $belegwerk->documentPdf(Template::fromDirectory('/path/to/quote'), ['number' => 'A-7', 'items' => $items]);
+// Any other document with free-form data (defaults are merged in as well)
+$pdf = $belegwerk->document(Template::fromDirectory('/path/to/quote'), ['number' => 'A-7', 'items' => $items]);
 ```
 
 All methods return the file content as a string.
@@ -107,7 +117,7 @@ and is a good starting point.
 
 ### Context
 
-For `invoicePdf()` and `zugferd()` the template receives the validated and calculated invoice:
+For `invoice()` the template receives the validated and calculated invoice:
 
 | Variable | Content |
 | --- | --- |
@@ -119,7 +129,7 @@ For `invoicePdf()` and `zugferd()` the template receives the validated and calcu
 | `totals` | `net_cents`, `tax_cents`, `gross_cents` |
 | `custom` | Your free-form data |
 
-For `documentPdf()` the context is exactly the array you pass. It may only contain arrays and scalars.
+For `document()` the context is the array you pass, merged into the defaults. It may only contain arrays and scalars.
 
 The standard template reads these optional `custom` fields: `logo` (data URI), `legal` (list of lines for the footer,
 e.g. commercial register and managing directors), `occasion`, `project`, `orderer`, `section_title`.
@@ -184,7 +194,7 @@ e-invoices.
 
 - XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note and a negative
   line: 0 errors with the official Schematron rules EN 16931 CII 1.3.16 and XRechnung 3.0.2
-- ZUGFeRD PDFs (EN 16931 and XRECHNUNG): PDF/A-3b valid according to veraPDF
+- ZUGFeRD PDFs from `invoice()`: PDF/A-3b valid according to veraPDF, embedded XML without Schematron errors
 
 ## Development
 

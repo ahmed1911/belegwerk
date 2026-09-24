@@ -66,6 +66,20 @@ final class EInvoiceBuilderTest extends TestCase
         self::assertStringNotContainsString('schemeID="VA"', $xml);
     }
 
+    public function testDefaultsAreMergedFieldByField(): void
+    {
+        $data = InvoiceNormalizerTest::example();
+        $belegwerk = new Belegwerk('http://127.0.0.1:9', defaults: ['seller' => $data['seller'], 'bank' => $data['bank']]);
+        unset($data['bank']);
+        $data['seller'] = ['phone' => '+49 30 999'];
+
+        $xml = $belegwerk->xrechnung($data);
+
+        self::assertStringContainsString('<ram:Name>Musterfirma GmbH</ram:Name>', $xml);
+        self::assertStringContainsString('<ram:CompleteNumber>+49 30 999</ram:CompleteNumber>', $xml);
+        self::assertStringContainsString('<ram:IBANID>DE89370400440532013000</ram:IBANID>', $xml);
+    }
+
     public function testXRechnungEnforcesItsMandatoryFields(): void
     {
         $data = InvoiceNormalizerTest::example();

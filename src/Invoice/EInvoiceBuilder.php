@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Belegwerk\Invoice;
 
-use Belegwerk\Belegwerk;
 use DateTimeImmutable;
 use horstoeko\zugferd\ZugferdDocumentBuilder;
 use horstoeko\zugferd\ZugferdProfiles;
@@ -20,9 +19,12 @@ use RuntimeException;
  */
 final class EInvoiceBuilder
 {
+    public const PROFILE_EN16931 = 'en16931';
+    public const PROFILE_XRECHNUNG = 'xrechnung';
+
     private const PROFILES = [
-        Belegwerk::PROFILE_EN16931 => ZugferdProfiles::PROFILE_EN16931,
-        Belegwerk::PROFILE_XRECHNUNG => ZugferdProfiles::PROFILE_XRECHNUNG_3,
+        self::PROFILE_EN16931 => ZugferdProfiles::PROFILE_EN16931,
+        self::PROFILE_XRECHNUNG => ZugferdProfiles::PROFILE_XRECHNUNG_3,
     ];
 
     public function build(array $invoice, string $profile): ZugferdDocumentBuilder

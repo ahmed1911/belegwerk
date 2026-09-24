@@ -20,9 +20,6 @@ use Twig\TwigFilter;
  */
 final class Belegwerk
 {
-    public const PROFILE_EN16931 = 'en16931';
-    public const PROFILE_XRECHNUNG = 'xrechnung';
-
     /** Templates are untrusted input: other tags, filters, all functions and method or property calls are rejected. */
     private const ALLOWED_TAGS = ['if', 'for', 'set'];
     private const ALLOWED_FILTERS = [
@@ -35,28 +32,28 @@ final class Belegwerk
     private readonly InvoiceNormalizer $normalizer;
     private readonly EInvoiceBuilder $builder;
 
-    public function __construct(string $gotenbergUrl = 'http://127.0.0.1:3000', int $timeout = 60)
-    {
+    /**
+     * @param array $defaults  data merged into every invoice and document, e.g. seller, bank and custom.logo;
+     *                         the data passed to a call overrides it field by field
+     */
+    public function __construct(
+        string $gotenbergUrl = 'http://127.0.0.1:3000',
+        private readonly array $defaults = [],
+        int $timeout = 60,
+    ) {
         $this->gotenberg = new GotenbergClient($gotenbergUrl, $timeout);
         $this->normalizer = new InvoiceNormalizer();
         $this->builder = new EInvoiceBuilder();
     }
 
     /**
-     * Renders an invoice as PDF, by default with the built-in standard layout.
+     * Renders an invoice as ZUGFeRD/Factur-X (EN 16931): a PDF/A-3b with the invoice XML embedded.
+     * Without a template, the built-in standard layout is used.
      */
-    public function invoicePdf(array $invoice, ?Template $template = null): string
+    public function invoice(array $invoice, ?Template $template = null): string
     {
-        return $this->render($template ?? Template::standard(), $this->normalize($invoice, self::PROFILE_EN16931));
-    }
-
-    /**
-     * Renders a ZUGFeRD/Factur-X invoice: a PDF/A-3b with the invoice XML embedded.
-     */
-    public function zugferd(array $invoice, ?Template $template = null, string $profile = self::PROFILE_EN16931): string
-    {
-        $invoice = $this->normalize($invoice, $profile);
-        $document = $this->builder->build($invoice, $profile);
+        $invoice = $this->normalizer->normalize($this->withDefaults($invoice));
+        $document = $this->builder->build($invoice, EInvoiceBuilder::PROFILE_EN16931);
 
         return (new ZugferdDocumentPdfBuilder($document, $this->render($template ?? Template::standard(), $invoice)))
             ->setAdditionalCreatorTool('belegwerk')
@@ -66,28 +63,26 @@ final class Belegwerk
     }
 
     /**
-     * Creates an XRechnung 3.0 in CII syntax.
+     * Creates an XRechnung 3.0 in CII syntax, e.g. for German public authorities.
      */
     public function xrechnung(array $invoice): string
     {
-        return $this->builder->toXml($this->normalize($invoice, self::PROFILE_XRECHNUNG), self::PROFILE_XRECHNUNG);
+        $invoice = $this->normalizer->normalize($this->withDefaults($invoice));
+        $this->normalizer->assertXRechnung($invoice);
+        return $this->builder->toXml($invoice, EInvoiceBuilder::PROFILE_XRECHNUNG);
     }
 
     /**
      * Renders any template with free-form data (arrays and scalars only), e.g. a quote or a reminder.
      */
-    public function documentPdf(Template $template, array $data = []): string
+    public function document(Template $template, array $data = []): string
     {
-        return $this->render($template, $data);
+        return $this->render($template, $this->withDefaults($data));
     }
 
-    private function normalize(array $invoice, string $profile): array
+    private function withDefaults(array $data): array
     {
-        $invoice = $this->normalizer->normalize($invoice);
-        if ($profile === self::PROFILE_XRECHNUNG) {
-            $this->normalizer->assertXRechnung($invoice);
-        }
-        return $invoice;
+        return array_replace_recursive($this->defaults, $data);
     }
 
     private function render(Template $template, array $context): string

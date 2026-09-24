@@ -30,34 +30,30 @@ final class BelegwerkTest extends TestCase
     public function testSandboxRejectsTemplatesBeforeRendering(string $html): void
     {
         $this->expectException(SecurityError::class);
-        (new Belegwerk('http://127.0.0.1:9'))->documentPdf(new Template($html));
+        (new Belegwerk('http://127.0.0.1:9'))->document(new Template($html));
     }
 
-    public function testInvoicePdfWithStandardTemplate(): void
+    public function testInvoiceIsZugferdWithStandardTemplate(): void
     {
-        $text = $this->text($this->gotenberg()->invoicePdf(InvoiceNormalizerTest::example()));
+        $pdf = $this->gotenberg()->invoice(InvoiceNormalizerTest::example());
 
+        $text = $this->text($pdf);
         self::assertStringContainsString('RE-2026-0042', $text);
         self::assertStringContainsString('1.062,37 €', $text);
         self::assertStringContainsString('Relaunch Website', $text);
         self::assertStringContainsString('IBAN DE89 3704 0044 0532 0130 00', $text);
-    }
 
-    public function testZugferdEmbedsInvoiceXml(): void
-    {
-        $pdf = $this->gotenberg()->zugferd(InvoiceNormalizerTest::example());
         $xml = ZugferdDocumentPdfReader::getXmlFromContent($pdf);
-
         self::assertStringContainsString('<ram:ID>RE-2026-0042</ram:ID>', $xml);
         self::assertStringContainsString('<ram:ID>urn:cen.eu:en16931:2017</ram:ID>', $xml);
     }
 
-    public function testDocumentPdfRendersFreeData(): void
+    public function testDocumentRendersFreeData(): void
     {
         $template = new Template(
             '<h1>Angebot {{ number }}</h1>{% for item in items %}<p>{{ item.name }}: {{ item.price|money }}</p>{% endfor %}',
         );
-        $text = $this->text($this->gotenberg()->documentPdf($template, [
+        $text = $this->text($this->gotenberg()->document($template, [
             'number' => 'A-7',
             'items' => [['name' => 'Workshop', 'price' => 1250]],
         ]));
