@@ -7,6 +7,7 @@ namespace Belegwerk\Tests;
 use Belegwerk\Belegwerk;
 use Belegwerk\Template;
 use horstoeko\zugferd\ZugferdDocumentPdfReader;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Smalot\PdfParser\Parser;
 use Twig\Sandbox\SecurityError;
@@ -16,10 +17,20 @@ use Twig\Sandbox\SecurityError;
  */
 final class BelegwerkTest extends TestCase
 {
-    public function testSandboxRejectsCallableFiltersBeforeRendering(): void
+    public static function forbiddenTemplates(): array
+    {
+        return [
+            'callable filter' => ["{{ ['id']|filter('system')|join }}"],
+            'function' => ['{% for i in range(1, 3) %}{{ i }}{% endfor %}'],
+            'extends' => ["{% extends 'index.html' %}"],
+        ];
+    }
+
+    #[DataProvider('forbiddenTemplates')]
+    public function testSandboxRejectsTemplatesBeforeRendering(string $html): void
     {
         $this->expectException(SecurityError::class);
-        (new Belegwerk('http://127.0.0.1:9'))->documentPdf(new Template("{{ ['id']|filter('system')|join }}"));
+        (new Belegwerk('http://127.0.0.1:9'))->documentPdf(new Template($html));
     }
 
     public function testInvoicePdfWithStandardTemplate(): void

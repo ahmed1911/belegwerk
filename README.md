@@ -1,92 +1,199 @@
 # belegwerk
 
-Leichtgewichtige HTTP-API zum Erzeugen von PDF-Dokumenten und E-Rechnungen.
+PHP library that renders PDF documents from Twig templates via [Gotenberg](https://gotenberg.dev) and creates
+e-invoices for Germany and the EU:
 
-| Endpunkt | Ergebnis |
-| --- | --- |
-| `POST /v1/invoices/pdf` | Rechnung als PDF |
-| `POST /v1/invoices/xrechnung` | XRechnung 3.0 (UN/CEFACT CII, XML) |
-| `POST /v1/invoices/zugferd` | ZUGFeRD 2.x / Factur-X: PDF/A-3b mit eingebetteter XML (`?profile=en16931` Standard, oder `?profile=xrechnung`) |
-| `POST /v1/documents/pdf` | Beliebiges HTML (+ optional CSS) als PDF |
-| `GET /health` | Status der API und von Gotenberg |
+- **XRechnung 3.0** (UN/CEFACT CII syntax)
+- **ZUGFeRD / Factur-X**: a PDF/A-3b with the invoice XML embedded (profile EN 16931 or XRECHNUNG)
+- **invoice PDFs** and **any other document** (quotes, delivery notes, reminders) from your own templates
 
-## Bausteine
+It is built for developers of invoicing software whose users design their own templates: templates run in Twig's
+sandbox, and Gotenberg runs without JavaScript and without network access. belegwerk stores nothing. Your application
+keeps templates and data and passes them in.
 
-- **[Gotenberg](https://gotenberg.dev)** rendert HTML mit Chromium zu PDF.
-- **[horstoeko/zugferd](https://github.com/horstoeko/zugferd)** (MIT) erzeugt das CII-XML
-  (EN 16931 bzw. XRechnung 3), prüft es gegen das XSD, bettet es in das PDF ein und schreibt
-  PDF/A-3 samt Factur-X-XMP-Metadaten.
-- Eigener Code: JSON-Validierung, Berechnung (Positionen, Steuergruppen, Summen), HTML-Layout und HTTP-Schicht.
+The e-invoice XML is written by [horstoeko/zugferd](https://github.com/horstoeko/zugferd).
 
-## Starten
+## Installation
 
 ```sh
-docker compose up -d --build        # API auf http://127.0.0.1:8080, Gotenberg auf :3000
+composer require ahmed1911/belegwerk
 ```
 
-Lokal ohne Docker für die API (Gotenberg muss laufen):
+Requirements: PHP 8.2+ with the extensions curl, dom, fileinfo, simplexml and zip, and a running Gotenberg 8. This repository's `compose.yaml` starts one on `127.0.0.1:3000`:
+
+```sh
+docker compose up -d
+```
+
+### Gotenberg settings
+
+Templates may come from untrusted users, so start Gotenberg with these flags (as in `compose.yaml`):
+
+| Flag | Why |
+| --- | --- |
+| `--chromium-disable-javascript=true` | Scripts in templates do not run. |
+| `--chromium-allow-list=^file:///tmp/.*` | Chromium only loads the files belegwerk sends. Requests to other URLs (internet or internal network) are blocked and those resources stay empty. |
+| `--api-disable-download-from=true` | Gotenberg does not download files from URLs given in requests. |
+
+Keep Gotenberg reachable only from your application, never publicly.
+
+## Usage
+
+```php
+use Belegwerk\Belegwerk;
+use Belegwerk\Template;
+
+$belegwerk = new Belegwerk('http://127.0.0.1:3000');   // Gotenberg URL, optional timeout in seconds (default 60)
+
+$pdf = $belegwerk->invoicePdf($invoice);                                          // built-in German layout
+$pdf = $belegwerk->zugferd($invoice);                                             // ZUGFeRD, profile EN 16931
+$pdf = $belegwerk->zugferd($invoice, profile: Belegwerk::PROFILE_XRECHNUNG);      // ZUGFeRD, profile XRECHNUNG
+$xml = $belegwerk->xrechnung($invoice);                                           // XRechnung 3.0 (CII)
+
+// Your own template, e.g. loaded from your database
+$template = new Template($html, footer: $footerHtml);
+$pdf = $belegwerk->invoicePdf($invoice, $template);
+$pdf = $belegwerk->zugferd($invoice, $template);
+
+// Any other document with free-form data
+$pdf = $belegwerk->documentPdf(Template::fromDirectory('/path/to/quote'), ['number' => 'A-7', 'items' => $items]);
+```
+
+All methods return the file content as a string.
+
+## Invoice data
+
+`$invoice` is an array (for example decoded JSON). Amounts are **integer cents**, dates are `YYYY-MM-DD` strings.
+belegwerk calculates line amounts (`round(quantity × unit_price_cents)`), the tax per category and rate, and the totals.
+See [`examples/invoice.json`](examples/invoice.json).
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `number`, `date`, `due_date` | yes | Invoice number, issue date, due date |
+| `type_code` | | `380` invoice (default), `381` credit note, `384` corrected invoice, `326` partial invoice, … |
+| `currency` | | Only `EUR` for now |
+| `service_date` or `period.start` + `period.end` | | Delivery date or billing period |
+| `buyer_reference` | XRechnung | Buyer reference; the Leitweg-ID for German public authorities |
+| `order_reference`, `payment_terms`, `note` | | Purchase order number, payment terms text, invoice note |
+| `tax_exemption_reason` | for category `E` | E.g. "Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG." |
+| `seller.name`, `seller.address` | yes | `address`: `street`, `zip`, `city`, `country` (ISO code, default `DE`), optional `additional` |
+| `seller.vat_id` or `seller.tax_number` | one of them | Without a VAT ID, the tax number also serves as seller identifier in the XML |
+| `seller.email`, `seller.phone` | XRechnung | Contact; `email` is also the electronic address |
+| `seller.contact_name`, `seller.electronic_address` | | Contact person (default: seller name), electronic address (default: `email`) |
+| `buyer.name`, `buyer.address.city` | yes | Street and zip are optional (zip is required for XRechnung) |
+| `buyer.email` or `buyer.electronic_address` | XRechnung | Email, or `{"scheme": "0204", "id": "<Leitweg-ID>"}` |
+| `buyer.vat_id` | for `AE`/`K` | Buyer VAT ID |
+| `bank.holder`, `bank.iban` | yes | SEPA credit transfer; optional `bic`, `name` |
+| `items[]` | yes | `description`, `unit_price_cents`, optional `quantity` (default 1, max. 3 decimals), `name`, `unit`, `unit_code`, `tax_rate` (default 19), `tax_category`, `custom` |
+| `custom` | | Free-form data for templates, passed through unchanged |
+
+**Units:** `unit` accepts common German names (`Stk`, `Std`, `Tag`, `Monat`, `pauschal`, `km`, `kg`, …) or a UN/ECE Rec. 20
+code (`H87`, `HUR`, `DAY`, `LS`, …). Other units need a `unit_code`.
+
+**VAT categories:** `S` (standard, rate > 0), `Z` (zero rated), `E` (exempt), `AE` (reverse charge),
+`K` (intra-community supply), `G` (export). All but `S` require `tax_rate: 0`.
+
+## Templates
+
+A `Template` has up to three Twig sources, each a complete HTML document:
+
+- `html` (required): the page content. Set page size and margins with CSS `@page`.
+- `header`, `footer` (optional): repeated on every page by Chromium. Elements with the classes `pageNumber` and
+  `totalPages` are filled in. Header and footer need their own inline styles and must fit into the page margins.
+
+Create one from strings (`new Template($html, $header, $footer)`) or from a directory with `html.twig`, `header.twig`
+and `footer.twig` (`Template::fromDirectory()`). [`templates/standard`](templates/standard) holds the built-in layout
+and is a good starting point.
+
+### Context
+
+For `invoicePdf()` and `zugferd()` the template receives the validated and calculated invoice:
+
+| Variable | Content |
+| --- | --- |
+| `number`, `type_code`, `currency`, `date`, `due_date`, `service_date`, `period.start`, `period.end` | As passed in |
+| `buyer_reference`, `order_reference`, `payment_terms`, `note`, `tax_exemption_reason` | As passed in, or `null` |
+| `seller`, `buyer`, `bank` | As passed in; `bank.iban` without spaces |
+| `lines[]` | `id`, `name`, `description`, `quantity` (e.g. `"6.5"`), `unit`, `unit_code`, `unit_price_cents`, `net_cents`, `tax_category`, `tax_rate`, `custom` |
+| `tax_groups[]` | `category`, `rate`, `base_cents`, `amount_cents`, `exemption_reason` |
+| `totals` | `net_cents`, `tax_cents`, `gross_cents` |
+| `custom` | Your free-form data |
+
+For `documentPdf()` the context is exactly the array you pass. It may only contain arrays and scalars.
+
+The standard template reads these optional `custom` fields: `logo` (data URI), `legal` (list of lines for the footer,
+e.g. commercial register and managing directors), `occasion`, `project`, `orderer`, `section_title`.
+
+### Formatting
+
+```twig
+{{ totals.gross_cents|money }}                  {# 1.062,37 € #}
+{{ date|date('d.m.Y') }}                        {# 24.09.2026 #}
+{{ line.quantity|replace({'.': ','}) }}         {# 6,5 #}
+{{ bank.iban|split('', 4)|join(' ') }}          {# DE89 3704 0044 0532 0130 00 #}
+```
+
+### What templates may use
+
+Templates run in Twig's sandbox with a strict policy:
+
+- **Tags:** `if`, `for`, `set`
+- **Filters:** `escape`/`e`, `raw`, `upper`, `lower`, `capitalize`, `title`, `trim`, `nl2br`, `striptags`, `replace`,
+  `format`, `number_format`, `round`, `abs`, `date`, `default`, `length`, `first`, `last`, `join`, `split`, `slice`,
+  `keys`, `merge`, `batch`, `column`, `money`
+- **Tests** such as `is empty`, `is defined`, `is odd`
+- Operators, including `~`, `in`, `??` and arithmetic
+
+Everything else is rejected: all functions, `include`, `extends`, macros, and method or property calls.
+Output is HTML-escaped automatically.
+
+### Fonts and images
+
+Embed them as `data:` URIs, since Gotenberg does not load anything from the network:
+
+```html
+<style>
+  @font-face { font-family: Brand; src: url(data:font/woff2;base64,...) format('woff2'); }
+  body { font-family: Brand, Arial, sans-serif; }
+</style>
+<img src="data:image/svg+xml;base64,...">
+```
+
+## Errors
+
+| Exception | When |
+| --- | --- |
+| `Belegwerk\Invoice\ValidationException` | Invalid invoice data. `$e->errors` maps field paths such as `items.0.unit_price_cents` to messages. |
+| `Twig\Error\Error` | Template syntax error or sandbox violation (`SecurityError`). `$e->getTemplateLine()` gives the line. |
+| `Belegwerk\Gotenberg\GotenbergException` | Gotenberg is unreachable or cannot render the document. |
+
+Tip: render a preview when a user saves a template, so errors show up there and not during invoicing.
+
+## Security notes
+
+- Templates cannot run PHP code, call methods or read files; see the allowed features above.
+- Twig's sandbox does not limit CPU time or memory. Render with PHP's `max_execution_time` and `memory_limit` in place;
+  Gotenberg limits a conversion with `--api-timeout` (default 30s).
+
+## Not supported (yet)
+
+Allowances and charges, prepayments, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
+e-invoices.
+
+## Tested with
+
+- XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note and a negative
+  line: 0 errors with the official Schematron rules EN 16931 CII 1.3.16 and XRechnung 3.0.2
+- ZUGFeRD PDFs (EN 16931 and XRECHNUNG): PDF/A-3b valid according to veraPDF
+
+## Development
 
 ```sh
 composer install
-GOTENBERG_URL=http://127.0.0.1:3000 composer serve
-composer test
+docker compose up -d
+composer test          # tests that need Gotenberg are skipped if it is not reachable (GOTENBERG_URL)
 ```
 
-Konfiguration über Umgebungsvariablen:
+## License
 
-- `GOTENBERG_URL`: Standard `http://127.0.0.1:3000`
-- `BELEGWERK_API_KEY`: wenn gesetzt, ist `Authorization: Bearer <key>` Pflicht (außer `/health`)
-
-## Beispiel
-
-```sh
-curl -X POST http://127.0.0.1:8080/v1/invoices/zugferd \
-  -H 'Content-Type: application/json' \
-  --data-binary @examples/invoice.json -o rechnung.pdf
-```
-
-## Rechnungs-JSON
-
-Siehe [`examples/invoice.json`](examples/invoice.json). Geldbeträge sind **ganze Cent**, Datumsangaben `YYYY-MM-DD`.
-Die API berechnet Positionsbeträge (`round(quantity × unit_price_cents)`), Steuer je Kategorie und Satz
-sowie die Summen selbst.
-
-| Feld | Pflicht | Beschreibung |
-| --- | --- | --- |
-| `number`, `date`, `due_date` | ja | Rechnungsnummer, Rechnungsdatum, Fälligkeit |
-| `type_code` | | `380` Rechnung (Standard), `381` Gutschrift, `384` Korrektur, `326` Teilrechnung, … |
-| `currency` | | derzeit nur `EUR` |
-| `service_date` / `period.start` + `period.end` | | Leistungsdatum bzw. Leistungszeitraum |
-| `buyer_reference` | XRechnung | Käuferreferenz, bei öffentlichen Auftraggebern die Leitweg-ID |
-| `order_reference`, `payment_terms`, `note` | | Bestellnummer, Zahlungsbedingungen (Text), Einleitungstext |
-| `occasion`, `project`, `orderer`, `section_title` | | nur für das PDF-Layout |
-| `tax_exemption_reason` | bei Kategorie `E` | Befreiungsgrund, z. B. Kleinunternehmer § 19 UStG |
-| `seller.name`, `seller.address` | ja | `address`: `street`, `zip`, `city`, `country` (ISO, Standard `DE`), optional `additional` |
-| `seller.vat_id` / `seller.tax_number` | eins von beiden | USt-IdNr. / Steuernummer |
-| `seller.email`, `seller.phone` | XRechnung | Kontakt; `email` dient auch als elektronische Adresse |
-| `seller.contact_name`, `seller.register`, `seller.legal`, `seller.logo` | | Ansprechpartner, Registereintrag, Fußzeilen-Zeilen, Logo (Base64 PNG/JPEG/SVG) |
-| `buyer.name`, `buyer.address.city` | ja | Adresse des Käufers (`zip` bei XRechnung Pflicht) |
-| `buyer.email` / `buyer.electronic_address` | XRechnung | E-Mail oder `{"scheme": "0204", "id": "<Leitweg-ID>"}` |
-| `buyer.vat_id` | bei `AE`/`K` | USt-IdNr. des Käufers |
-| `bank.holder`, `bank.iban` | ja | SEPA-Überweisung; optional `bic`, `name` |
-| `items[]` | ja | `description`, `unit_price_cents`, optional `quantity` (Standard 1, max. 3 Nachkommastellen), `name`, `unit`, `unit_code`, `tax_rate` (Standard 19), `tax_category` |
-
-**Einheiten:** `unit` akzeptiert gängige deutsche Bezeichnungen (`Stk`, `Std`, `Tag`, `Monat`, `pauschal`, `km`, `kg`, …)
-oder direkt einen UN/ECE-Rec.-20-Code (`H87`, `HUR`, `DAY`, `LS`, …). Unbekannte Einheiten brauchen `unit_code`.
-
-**Steuerkategorien:** `S` (Standard, Satz > 0), `Z` (Nullsatz), `E` (steuerbefreit), `AE` (Reverse Charge),
-`K` (innergemeinschaftliche Lieferung), `G` (Ausfuhr). Außer `S` immer mit `tax_rate: 0`.
-
-**Fehler** kommen als JSON: `400` ungültiges JSON, `401` fehlender API-Key, `422` Validierung
-(mit `details` pro Feldpfad, z. B. `"items.0.unit_price_cents"`), `502` Gotenberg-Fehler.
-
-## Noch nicht unterstützt
-
-Rabatte/Zuschläge auf Belegebene, Anzahlungen, andere Währungen als EUR, Steuerkategorie `O`,
-UBL-Syntax sowie das Einlesen eingehender E-Rechnungen (mit horstoeko/zugferd gut ergänzbar).
-
-## Geprüft
-
-Die erzeugten XML-Dateien (Standard-, Kleinunternehmer-, Reverse-Charge-, Gutschrift- und Negativpositions-Fall) wurden mit den
-offiziellen Schematron-Regeln EN 16931 CII 1.3.16 und XRechnung 3.0.2 ohne Fehler validiert,
-das ZUGFeRD-PDF mit veraPDF als PDF/A-3b (PASS).
+MIT, see [LICENSE](LICENSE).

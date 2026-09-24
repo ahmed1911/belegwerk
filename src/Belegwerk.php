@@ -9,8 +9,8 @@ use Belegwerk\Invoice\EInvoiceBuilder;
 use Belegwerk\Invoice\InvoiceNormalizer;
 use horstoeko\zugferd\ZugferdDocumentPdfBuilder;
 use Twig\Environment;
-use Twig\Extension\SandboxExtension;
 use Twig\Loader\ArrayLoader;
+use Twig\Sandbox\Sandbox;
 use Twig\Sandbox\SecurityPolicy;
 use Twig\TwigFilter;
 
@@ -23,14 +23,13 @@ final class Belegwerk
     public const PROFILE_EN16931 = 'en16931';
     public const PROFILE_XRECHNUNG = 'xrechnung';
 
-    /** Templates are untrusted input: everything else, including method and property calls, is rejected. */
+    /** Templates are untrusted input: other tags, filters, all functions and method or property calls are rejected. */
     private const ALLOWED_TAGS = ['if', 'for', 'set'];
     private const ALLOWED_FILTERS = [
         'escape', 'e', 'raw', 'upper', 'lower', 'capitalize', 'title', 'trim', 'nl2br', 'striptags', 'replace',
         'format', 'number_format', 'round', 'abs', 'date', 'default', 'length', 'first', 'last', 'join', 'split',
         'slice', 'keys', 'merge', 'batch', 'column', 'money',
     ];
-    private const ALLOWED_FUNCTIONS = ['range', 'min', 'max', 'cycle'];
 
     private readonly GotenbergClient $gotenberg;
     private readonly InvoiceNormalizer $normalizer;
@@ -100,18 +99,17 @@ final class Belegwerk
         ], static fn (?string $source): bool => $source !== null);
 
         $twig = new Environment(new ArrayLoader($sources));
-        $twig->addExtension(new SandboxExtension(
-            new SecurityPolicy(self::ALLOWED_TAGS, self::ALLOWED_FILTERS, [], [], self::ALLOWED_FUNCTIONS),
-            true,
-        ));
         $twig->addFilter(new TwigFilter(
             'money',
             static fn (int|float $cents): string => number_format($cents / 100, 2, ',', '.') . ' €',
         ));
+        $policy = new SecurityPolicy(self::ALLOWED_TAGS, self::ALLOWED_FILTERS);
+        $policy->setStrict(true);
+        $sandbox = new Sandbox($twig, $policy);
 
         $files = [];
         foreach (array_keys($sources) as $name) {
-            $files[$name] = $twig->render($name, $context);
+            $files[$name] = $sandbox->render($name, $context);
         }
 
         return $this->gotenberg->convertHtml($files, [
