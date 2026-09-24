@@ -26,6 +26,7 @@ final class InvoiceNormalizerTest extends TestCase
             ['category' => 'S', 'rate' => '7', 'base_cents' => 6990, 'amount_cents' => 489, 'exemption_reason' => null],
         ], $invoice['tax_groups']);
         self::assertSame(['net_cents' => 89980, 'tax_cents' => 16257, 'gross_cents' => 106237], $invoice['totals']);
+        self::assertSame('2026-09-24', $invoice['date']);
         self::assertSame('DE89370400440532013000', $invoice['bank']['iban']);
         self::assertSame(['scheme' => 'EM', 'id' => 'eingangsrechnung@beispielstadt.de'], $invoice['buyer']['electronic_address']);
     }
@@ -40,10 +41,26 @@ final class InvoiceNormalizerTest extends TestCase
 
         try {
             (new InvoiceNormalizer())->normalize($data);
-            self::fail('ValidationException erwartet');
+            self::fail('ValidationException expected');
         } catch (ValidationException $error) {
             self::assertSame(['date', 'bank.iban', 'items.0.unit_price_cents', 'items.1.unit_code'], array_keys($error->errors));
+            self::assertStringContainsString('bank.iban: Invalid IBAN.', $error->getMessage());
         }
+    }
+
+    public function testPassesCustomDataThrough(): void
+    {
+        $data = self::example();
+        $data['items'][0]['custom'] = ['date' => '2026-09-03'];
+        $invoice = (new InvoiceNormalizer())->normalize($data);
+
+        self::assertSame('Relaunch Website', $invoice['custom']['project']);
+        self::assertSame(['date' => '2026-09-03'], $invoice['lines'][0]['custom']);
+        self::assertSame([], $invoice['lines'][1]['custom']);
+
+        $data['custom'] = 'not an object';
+        $this->expectException(ValidationException::class);
+        (new InvoiceNormalizer())->normalize($data);
     }
 
     public function testSmallBusinessRequiresExemptionReason(): void
@@ -57,7 +74,7 @@ final class InvoiceNormalizerTest extends TestCase
 
         try {
             (new InvoiceNormalizer())->normalize($data);
-            self::fail('ValidationException erwartet');
+            self::fail('ValidationException expected');
         } catch (ValidationException $error) {
             self::assertArrayHasKey('tax_exemption_reason', $error->errors);
         }
@@ -76,18 +93,6 @@ final class InvoiceNormalizerTest extends TestCase
 
         $this->expectException(ValidationException::class);
         $normalizer->assertXRechnung($normalizer->normalize($data));
-    }
-
-    public function testPdfDataMatchesInvoicePdfServiceContract(): void
-    {
-        $normalizer = new InvoiceNormalizer();
-        $pdf = $normalizer->toPdfData($normalizer->normalize(self::example()));
-
-        self::assertSame(['Hauptstraße 1', '80331 München'], $pdf['company']['address']);
-        self::assertSame('DE89 3704 0044 0532 0130 00', $pdf['bank']['iban']);
-        self::assertSame('01.09.2026 – 30.09.2026', $pdf['period']);
-        self::assertSame(['net_cents' => 89980, 'gross_cents' => 106237], $pdf['totals']);
-        self::assertSame('zzgl. USt. 19 %', $pdf['taxes'][0]['label']);
     }
 
     public function testIbanChecksum(): void

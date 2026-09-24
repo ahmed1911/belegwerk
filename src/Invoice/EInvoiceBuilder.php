@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Belegwerk\Invoice;
 
+use Belegwerk\Belegwerk;
+use DateTimeImmutable;
 use horstoeko\zugferd\ZugferdDocumentBuilder;
 use horstoeko\zugferd\ZugferdProfiles;
 use horstoeko\zugferd\ZugferdXsdValidator;
@@ -11,27 +13,27 @@ use InvalidArgumentException;
 use RuntimeException;
 
 /**
- * Überträgt eine normalisierte Rechnung (InvoiceNormalizer) in den ZugferdDocumentBuilder von
- * horstoeko/zugferd, der das CII-XML für XRechnung bzw. ZUGFeRD/Factur-X erzeugt.
+ * Maps a normalized invoice (see InvoiceNormalizer) onto the ZugferdDocumentBuilder of horstoeko/zugferd,
+ * which writes the CII XML for XRechnung and ZUGFeRD/Factur-X.
+ *
+ * @internal
  */
 final class EInvoiceBuilder
 {
-    public const PROFILE_EN16931 = 'en16931';
-    public const PROFILE_XRECHNUNG = 'xrechnung';
-
     private const PROFILES = [
-        self::PROFILE_EN16931 => ZugferdProfiles::PROFILE_EN16931,
-        self::PROFILE_XRECHNUNG => ZugferdProfiles::PROFILE_XRECHNUNG_3,
+        Belegwerk::PROFILE_EN16931 => ZugferdProfiles::PROFILE_EN16931,
+        Belegwerk::PROFILE_XRECHNUNG => ZugferdProfiles::PROFILE_XRECHNUNG_3,
     ];
 
-    public function build(array $invoice, string $profile = self::PROFILE_EN16931): ZugferdDocumentBuilder
+    public function build(array $invoice, string $profile): ZugferdDocumentBuilder
     {
-        $profileId = self::PROFILES[$profile] ?? throw new InvalidArgumentException("Unbekanntes Profil: {$profile}");
+        $profileId = self::PROFILES[$profile] ?? throw new InvalidArgumentException("Unknown profile: {$profile}");
         $amount = static fn (int $cents): float => $cents / 100;
+        $date = static fn (string $date): DateTimeImmutable => new DateTimeImmutable($date);
 
         $document = ZugferdDocumentBuilder::createNew($profileId)
             ->setDocumentBusinessProcess('urn:fdc:peppol.eu:2017:poacc:billing:01:1.0')
-            ->setDocumentInformation($invoice['number'], $invoice['type_code'], $invoice['date'], $invoice['currency']);
+            ->setDocumentInformation($invoice['number'], $invoice['type_code'], $date($invoice['date']), $invoice['currency']);
         if ($invoice['note'] !== null) {
             $document->addDocumentNote($invoice['note']);
         }
@@ -44,7 +46,8 @@ final class EInvoiceBuilder
 
         $seller = $invoice['seller'];
         $document
-            ->setDocumentSeller($seller['name'])
+            // BR-CO-26 needs a seller identifier; without a VAT ID the tax number serves as one (FeRD example E13_01).
+            ->setDocumentSeller($seller['name'], $seller['vat_id'] === null ? $seller['tax_number'] : null)
             ->setDocumentSellerAddress(
                 $seller['address']['street'],
                 $seller['address']['additional'],
@@ -86,10 +89,10 @@ final class EInvoiceBuilder
         }
 
         if ($invoice['service_date'] !== null) {
-            $document->setDocumentSupplyChainEvent($invoice['service_date']);
+            $document->setDocumentSupplyChainEvent($date($invoice['service_date']));
         }
         if ($invoice['period'] !== null) {
-            $document->setDocumentBillingPeriod($invoice['period']['start'], $invoice['period']['end'], null);
+            $document->setDocumentBillingPeriod($date($invoice['period']['start']), $date($invoice['period']['end']), null);
         }
 
         $document->addDocumentPaymentMeanToCreditTransfer(
@@ -100,8 +103,8 @@ final class EInvoiceBuilder
             $invoice['number'],
         );
         $document->addDocumentPaymentTerm(
-            $invoice['payment_terms'] ?? 'Zahlbar bis zum ' . $invoice['due_date']->format('d.m.Y') . ' ohne Abzug.',
-            $invoice['due_date'],
+            $invoice['payment_terms'] ?? 'Zahlbar bis zum ' . $date($invoice['due_date'])->format('d.m.Y') . ' ohne Abzug.',
+            $date($invoice['due_date']),
         );
 
         foreach ($invoice['tax_groups'] as $group) {
@@ -127,7 +130,7 @@ final class EInvoiceBuilder
         );
 
         foreach ($invoice['lines'] as $line) {
-            // EN 16931 verbietet negative Einzelpreise (BR-27): Vorzeichen wandert in die Menge.
+            // EN 16931 forbids negative unit prices (BR-27), so the sign moves to the quantity.
             $negative = $line['unit_price_cents'] < 0;
             $document
                 ->addNewPosition($line['id'])
@@ -145,14 +148,14 @@ final class EInvoiceBuilder
     }
 
     /**
-     * Erzeugt das XML und prüft es gegen das XSD-Schema des Profils.
+     * Writes the XML and checks it against the XSD schema of the profile.
      */
-    public function toXml(array $invoice, string $profile = self::PROFILE_EN16931): string
+    public function toXml(array $invoice, string $profile): string
     {
         $document = $this->build($invoice, $profile);
         $validator = (new ZugferdXsdValidator($document))->validate();
         if ($validator->hasValidationErrors()) {
-            throw new RuntimeException('Erzeugtes E-Rechnungs-XML ist nicht schemakonform: ' . implode('; ', $validator->validationErrors()));
+            throw new RuntimeException('The generated e-invoice XML violates the schema: ' . implode('; ', $validator->validationErrors()));
         }
         return $document->getContent();
     }

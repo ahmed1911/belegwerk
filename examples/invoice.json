@@ -2,24 +2,35 @@
   "number": "RE-2026-0042",
   "date": "2026-09-24",
   "due_date": "2026-10-08",
-  "period": { "start": "2026-09-01", "end": "2026-09-30" },
+  "period": {
+    "start": "2026-09-01",
+    "end": "2026-09-30"
+  },
   "buyer_reference": "04011000-12345-34",
   "order_reference": "PO-7781",
-  "project": "Relaunch Website",
   "note": "Vielen Dank für Ihren Auftrag. Wir berechnen Ihnen folgende Leistungen:",
   "seller": {
     "name": "Musterfirma GmbH",
-    "address": { "street": "Hauptstraße 1", "zip": "80331", "city": "München", "country": "DE" },
+    "address": {
+      "street": "Hauptstraße 1",
+      "zip": "80331",
+      "city": "München",
+      "country": "DE"
+    },
     "vat_id": "DE123456789",
     "tax_number": "143/123/45678",
-    "register": "Amtsgericht München, HRB 123456",
     "contact_name": "Erika Mustermann",
     "phone": "+49 89 1234567",
     "email": "rechnung@musterfirma.de"
   },
   "buyer": {
     "name": "Stadtverwaltung Beispielstadt",
-    "address": { "street": "Rathausplatz 5", "zip": "10115", "city": "Berlin", "country": "DE" },
+    "address": {
+      "street": "Rathausplatz 5",
+      "zip": "10115",
+      "city": "Berlin",
+      "country": "DE"
+    },
     "email": "eingangsrechnung@beispielstadt.de"
   },
   "bank": {
@@ -29,8 +40,32 @@
     "name": "Commerzbank"
   },
   "items": [
-    { "description": "Konzeption und Workshop\nInkl. Vor- und Nachbereitung", "quantity": 6.5, "unit": "Std", "unit_price_cents": 12000, "tax_rate": 19 },
-    { "description": "Hosting-Paket Business", "quantity": 1, "unit": "Monat", "unit_price_cents": 4990, "tax_rate": 19 },
-    { "description": "Fachbuch \"Barrierefreies Webdesign\"", "quantity": 2, "unit": "Stk", "unit_price_cents": 3495, "tax_rate": 7 }
-  ]
+    {
+      "description": "Konzeption und Workshop\nInkl. Vor- und Nachbereitung",
+      "quantity": 6.5,
+      "unit": "Std",
+      "unit_price_cents": 12000,
+      "tax_rate": 19
+    },
+    {
+      "description": "Hosting-Paket Business",
+      "quantity": 1,
+      "unit": "Monat",
+      "unit_price_cents": 4990,
+      "tax_rate": 19
+    },
+    {
+      "description": "Fachbuch \"Barrierefreies Webdesign\"",
+      "quantity": 2,
+      "unit": "Stk",
+      "unit_price_cents": 3495,
+      "tax_rate": 7
+    }
+  ],
+  "custom": {
+    "project": "Relaunch Website",
+    "legal": [
+      "Amtsgericht München, HRB 123456"
+    ]
+  }
 }
