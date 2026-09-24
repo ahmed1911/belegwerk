@@ -1,4 +1,15 @@
 services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      GOTENBERG_URL: http://gotenberg:3000
+      BELEGWERK_API_KEY: ${BELEGWERK_API_KEY:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - gotenberg
+
   gotenberg:
     image: gotenberg/gotenberg:8
     restart: unless-stopped

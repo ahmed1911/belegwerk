@@ -6,7 +6,7 @@ namespace Belegwerk\Http;
 
 use Belegwerk\Gotenberg\GotenbergClient;
 use Belegwerk\Gotenberg\GotenbergException;
-use Belegwerk\Invoice\CiiInvoiceWriter;
+use Belegwerk\Invoice\EInvoiceBuilder;
 use Belegwerk\Invoice\InvoiceNormalizer;
 use Belegwerk\Invoice\InvoicePdfService;
 use Belegwerk\Invoice\ValidationException;
@@ -37,7 +37,7 @@ final class App
     ) {
         $this->normalizer = new InvoiceNormalizer();
         $this->pdfService = new InvoicePdfService($gotenberg);
-        $this->zugferd = new ZugferdService($this->pdfService, new CiiInvoiceWriter(), $this->normalizer);
+        $this->zugferd = new ZugferdService($this->pdfService, new EInvoiceBuilder(), $this->normalizer);
     }
 
     /** @param array<string, string> $query */
@@ -48,7 +48,7 @@ final class App
             '/health' => ['GET', fn () => $this->health()],
             '/v1/invoices/pdf' => ['POST', fn () => $this->invoicePdf($body)],
             '/v1/invoices/xrechnung' => ['POST', fn () => $this->xrechnung($body)],
-            '/v1/invoices/zugferd' => ['POST', fn () => $this->zugferd($body, $query['profile'] ?? CiiInvoiceWriter::PROFILE_EN16931)],
+            '/v1/invoices/zugferd' => ['POST', fn () => $this->zugferd($body, $query['profile'] ?? EInvoiceBuilder::PROFILE_EN16931)],
             '/v1/documents/pdf' => ['POST', fn () => $this->documentPdf($body)],
         ];
 
@@ -100,17 +100,17 @@ final class App
     {
         $invoice = $this->normalizer->normalize($this->decode($body));
         $this->normalizer->assertXRechnung($invoice);
-        $xml = (new CiiInvoiceWriter())->write($invoice, CiiInvoiceWriter::PROFILE_XRECHNUNG);
+        $xml = (new EInvoiceBuilder())->toXml($invoice, EInvoiceBuilder::PROFILE_XRECHNUNG);
         return Response::file($xml, 'application/xml; charset=utf-8', $this->filename($invoice, 'xml'));
     }
 
     private function zugferd(string $body, string $profile): Response
     {
-        if (!in_array($profile, [CiiInvoiceWriter::PROFILE_EN16931, CiiInvoiceWriter::PROFILE_XRECHNUNG], true)) {
+        if (!in_array($profile, [EInvoiceBuilder::PROFILE_EN16931, EInvoiceBuilder::PROFILE_XRECHNUNG], true)) {
             return Response::error(422, 'profile muss "en16931" oder "xrechnung" sein.');
         }
         $invoice = $this->normalizer->normalize($this->decode($body));
-        if ($profile === CiiInvoiceWriter::PROFILE_XRECHNUNG) {
+        if ($profile === EInvoiceBuilder::PROFILE_XRECHNUNG) {
             $this->normalizer->assertXRechnung($invoice);
         }
         $pdf = $this->zugferd->render($invoice, $profile);

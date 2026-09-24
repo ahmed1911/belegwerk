@@ -189,7 +189,10 @@ final class InvoiceNormalizer
                 'name' => $invoice['buyer']['name'],
                 'address' => self::addressLines($invoice['buyer']['address']),
             ],
-            'bank' => array_filter($invoice['bank'], static fn ($value) => $value !== null),
+            'bank' => array_filter(
+                ['iban' => trim(chunk_split($invoice['bank']['iban'], 4, ' '))] + $invoice['bank'],
+                static fn ($value) => $value !== null,
+            ),
             'items' => array_map(static fn (array $line): array => [
                 'description' => $line['description'] ?? $line['name'],
                 'quantity' => $line['quantity'],

@@ -3,3 +3,4 @@
 tmp/
 output/
 vendor/
+.phpunit.result.cache
