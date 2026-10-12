@@ -92,6 +92,25 @@ final class EInvoiceBuilderTest extends TestCase
         self::assertStringContainsString('<ram:DuePayableAmount>1000.00</ram:DuePayableAmount>', $xml);
     }
 
+    public function testAllowancesAndChargesAreWrittenToXml(): void
+    {
+        $xml = $this->belegwerk()->xrechnung(InvoiceNormalizerTest::withAllowancesAndCharges(InvoiceNormalizerTest::example()));
+
+        self::assertMatchesRegularExpression(
+            '#<ram:CalculationPercent>10.00</ram:CalculationPercent>\s*<ram:BasisAmount>780.00</ram:BasisAmount>\s*'
+            . '<ram:ActualAmount>78.00</ram:ActualAmount>\s*<ram:Reason>Treuerabatt</ram:Reason>#',
+            $xml,
+        );
+        self::assertMatchesRegularExpression(
+            '#<ram:ActualAmount>4.90</ram:ActualAmount>\s*<ram:ReasonCode>FC</ram:ReasonCode>\s*<ram:Reason>Versand</ram:Reason>#',
+            $xml,
+        );
+        self::assertStringContainsString('<ram:LineTotalAmount>826.80</ram:LineTotalAmount>', $xml);
+        self::assertStringContainsString('<ram:ChargeTotalAmount>4.90</ram:ChargeTotalAmount>', $xml);
+        self::assertStringContainsString('<ram:AllowanceTotalAmount>41.35</ram:AllowanceTotalAmount>', $xml);
+        self::assertStringContainsString('<ram:TaxBasisTotalAmount>790.35</ram:TaxBasisTotalAmount>', $xml);
+    }
+
     public function testDirectDebitIsWrittenToXml(): void
     {
         $data = InvoiceNormalizerTest::example();

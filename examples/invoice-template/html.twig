@@ -102,7 +102,11 @@
         <tbody>
             {% for line in lines %}
                 <tr>
-                    <td>{{ line.description|nl2br }}</td>
+                    <td>
+                        {{ line.description|nl2br }}
+                        {% for adjustment in line.allowances %}<br><small>abzgl. {{ adjustment.reason }}{% if adjustment.percent %} {{ adjustment.percent|replace({'.': ','}) }} %{% endif %}: {{ adjustment.amount_cents|money }}</small>{% endfor %}
+                        {% for adjustment in line.charges %}<br><small>zzgl. {{ adjustment.reason }}{% if adjustment.percent %} {{ adjustment.percent|replace({'.': ','}) }} %{% endif %}: {{ adjustment.amount_cents|money }}</small>{% endfor %}
+                    </td>
                     <td class="num">{{ line.quantity|replace({'.': ','}) }} {{ line.unit }}</td>
                     <td class="num">{{ line.unit_price_cents|money }}</td>
                     <td class="num">{{ line.net_cents|money }}</td>
@@ -112,6 +116,15 @@
     </table>
 
     <section class="invoice-totals" aria-label="Rechnungssummen">
+        {% if allowances or charges %}
+            <div class="total-row"><span>Summe Positionen</span><span>{{ totals.line_total_cents|money }}</span></div>
+            {% for adjustment in allowances %}
+                <div class="total-row"><span>abzgl. {{ adjustment.reason }}{% if adjustment.percent %} {{ adjustment.percent|replace({'.': ','}) }} %{% endif %}{% if tax_groups|length > 1 %} ({{ adjustment.tax_rate|replace({'.': ','}) }} % USt.){% endif %}</span><span>−{{ adjustment.amount_cents|money }}</span></div>
+            {% endfor %}
+            {% for adjustment in charges %}
+                <div class="total-row"><span>zzgl. {{ adjustment.reason }}{% if adjustment.percent %} {{ adjustment.percent|replace({'.': ','}) }} %{% endif %}{% if tax_groups|length > 1 %} ({{ adjustment.tax_rate|replace({'.': ','}) }} % USt.){% endif %}</span><span>{{ adjustment.amount_cents|money }}</span></div>
+            {% endfor %}
+        {% endif %}
         <div class="total-row"><span>Summe netto</span><span>{{ totals.net_cents|money }}</span></div>
         {% for tax in tax_groups %}
             <div class="total-row">

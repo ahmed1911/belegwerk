@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Belegwerk\Invoice;
 
 use DateTimeImmutable;
+use horstoeko\zugferd\codelistsenum\ZugferdAllowanceCodes;
+use horstoeko\zugferd\codelistsenum\ZugferdChargeCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdCountryCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdElectronicAddressScheme;
 use horstoeko\zugferd\codelistsenum\ZugferdUnitCodes;
@@ -14,8 +16,9 @@ use Symfony\Component\Validator\Validation;
 /**
  * Validates invoice data and calculates lines, tax groups and totals.
  *
- * Amounts are integer cents: line amount = round(quantity × unit price), tax per category and rate =
- * round(base × rate / 100), both calculated exactly and rounded half away from zero. The result contains only
+ * Amounts are integer cents: line amount = round(quantity × unit price) − allowances + charges, percentage
+ * allowances and charges = round(base × percent / 100), tax per category and rate = round(base × rate / 100),
+ * all calculated exactly and rounded half away from zero. The result contains only
  * arrays and scalars, so it serves both as the input for the e-invoice XML and as the context of (sandboxed)
  * Twig templates.
  *
@@ -100,6 +103,8 @@ final class InvoiceNormalizer
             'direct_debit' => $directDebit,
             'cash_discount' => $this->cashDiscount($data['cash_discount'] ?? null),
             'lines' => $this->lines($data['items'] ?? null),
+            'allowances' => $this->adjustments($data, 'allowances', '', true),
+            'charges' => $this->adjustments($data, 'charges', '', true),
             'custom' => $this->custom($data),
         ];
 
@@ -144,13 +149,28 @@ final class InvoiceNormalizer
     private function calculate(array &$invoice, int $paid): void
     {
         $groups = [];
-        $net = 0;
+        $lineTotal = 0;
         foreach ($invoice['lines'] as $line) {
             $key = $line['tax_category'] . '|' . $line['tax_rate'];
             $groups[$key] ??= ['category' => $line['tax_category'], 'rate' => $line['tax_rate'], 'base_cents' => 0];
             $groups[$key]['base_cents'] += $line['net_cents'];
-            $net += $line['net_cents'];
+            $lineTotal += $line['net_cents'];
         }
+
+        // Percentages on the whole invoice refer to the line amounts, not to each other.
+        $lineGroups = $groups;
+        $adjustmentTotals = [];
+        foreach (['allowances' => -1, 'charges' => 1] as $type => $sign) {
+            $invoice[$type] = $this->resolveAdjustments($invoice[$type], $type, $lineGroups);
+            $adjustmentTotals[$type] = 0;
+            foreach ($invoice[$type] as $adjustment) {
+                $key = $adjustment['tax_category'] . '|' . $adjustment['tax_rate'];
+                $groups[$key] ??= ['category' => $adjustment['tax_category'], 'rate' => $adjustment['tax_rate'], 'base_cents' => 0];
+                $groups[$key]['base_cents'] += $sign * $adjustment['amount_cents'];
+                $adjustmentTotals[$type] += $adjustment['amount_cents'];
+            }
+        }
+        $net = $lineTotal - $adjustmentTotals['allowances'] + $adjustmentTotals['charges'];
 
         $taxTotal = 0;
         foreach ($groups as &$group) {
@@ -166,6 +186,9 @@ final class InvoiceNormalizer
         $gross = $net + $taxTotal;
         $due = $gross - $paid;
         $invoice['totals'] = [
+            'line_total_cents' => $lineTotal,
+            'allowance_total_cents' => $adjustmentTotals['allowances'],
+            'charge_total_cents' => $adjustmentTotals['charges'],
             'net_cents' => $net,
             'tax_cents' => $taxTotal,
             'gross_cents' => $gross,
@@ -182,6 +205,55 @@ final class InvoiceNormalizer
                 'payable_cents' => $due - $discount,
             ];
         }
+    }
+
+    /**
+     * Resolves allowances or charges on the whole invoice to one VAT category and rate each (EN 16931 BG-20/BG-21).
+     * A percentage without tax_rate or tax_category applies to every tax group of the lines; an amount without
+     * them takes the tax of the lines, if they all have the same.
+     *
+     * @param array<string, array{category: string, rate: string, base_cents: int}> $lineGroups
+     */
+    private function resolveAdjustments(array $adjustments, string $type, array $lineGroups): array
+    {
+        $resolved = [];
+        foreach ($adjustments as $index => $adjustment) {
+            $tax = $adjustment['tax'];
+            unset($adjustment['tax']);
+            if ($tax !== null) {
+                $targets = [$lineGroups[$tax[0] . '|' . $tax[1]] ?? ['category' => $tax[0], 'rate' => $tax[1], 'base_cents' => null]];
+            } elseif ($adjustment['percent'] !== null || count($lineGroups) === 1) {
+                $targets = $lineGroups;
+            } else {
+                $this->errors["{$type}.{$index}.tax_rate"] = 'Required when the lines have different VAT rates.';
+                continue;
+            }
+
+            foreach ($targets as $group) {
+                if ($adjustment['percent'] !== null && $group['base_cents'] === null) {
+                    $this->errors["{$type}.{$index}.tax_rate"] = 'No line has this VAT category and rate.';
+                    continue;
+                }
+                $resolved[] = self::adjustmentAmount($adjustment, $group['base_cents']) + [
+                    'tax_category' => $group['category'],
+                    'tax_rate' => $group['rate'],
+                ];
+            }
+        }
+        return $resolved;
+    }
+
+    /** Calculates the amount of a percentage allowance or charge from its base. */
+    private static function adjustmentAmount(array $adjustment, ?int $base): array
+    {
+        $percent = $adjustment['percent'];
+        return [
+            'reason' => $adjustment['reason'],
+            'reason_code' => $adjustment['reason_code'],
+            'percent' => $percent,
+            'base_cents' => $percent !== null ? $base : null,
+            'amount_cents' => $percent !== null ? self::roundedProduct(2, (string) $base, $percent) : $adjustment['amount_cents'],
+        ];
     }
 
     /**
@@ -407,6 +479,17 @@ final class InvoiceNormalizer
             [$unitCode, $unitLabel] = $this->unit($item, $prefix);
             [$category, $rate] = $this->tax($item, $prefix);
 
+            $subtotal = self::roundedProduct(0, $quantity, (string) $price);
+            $net = $subtotal;
+            $adjustments = [];
+            foreach (['allowances' => -1, 'charges' => 1] as $type => $sign) {
+                $adjustments[$type] = array_map(
+                    static fn (array $adjustment): array => self::adjustmentAmount($adjustment, $subtotal),
+                    $this->adjustments($item, $type, $prefix, false),
+                );
+                $net += $sign * array_sum(array_column($adjustments[$type], 'amount_cents'));
+            }
+
             $lines[] = [
                 'id' => (string) ($index + 1),
                 'name' => $name,
@@ -415,13 +498,70 @@ final class InvoiceNormalizer
                 'unit' => $unitLabel,
                 'unit_code' => $unitCode,
                 'unit_price_cents' => $price,
-                'net_cents' => self::roundedProduct(0, $quantity, (string) $price),
+                'subtotal_cents' => $subtotal,
+                'allowances' => $adjustments['allowances'],
+                'charges' => $adjustments['charges'],
+                'net_cents' => $net,
                 'tax_category' => $category,
                 'tax_rate' => $rate,
                 'custom' => $this->custom($item, $prefix),
             ];
         }
         return $lines;
+    }
+
+    /**
+     * Allowances or charges of a line or of the whole invoice: reason, amount_cents or percent, optional reason_code
+     * (UNTDID 5189 for allowances, 7161 for charges). On the whole invoice also tax_rate and tax_category.
+     */
+    private function adjustments(array $data, string $type, string $prefix, bool $withTax): array
+    {
+        $entries = $data[$type] ?? [];
+        if (!is_array($entries) || !array_is_list($entries)) {
+            $this->errors[$prefix . $type] = 'Expected a list.';
+            return [];
+        }
+
+        $adjustments = [];
+        foreach ($entries as $index => $entry) {
+            $path = "{$prefix}{$type}.{$index}.";
+            if (!is_array($entry)) {
+                $this->errors[rtrim($path, '.')] = 'Expected an object with reason and amount_cents or percent.';
+                continue;
+            }
+
+            $amount = $entry['amount_cents'] ?? null;
+            $percent = $entry['percent'] ?? null;
+            if (($amount === null) === ($percent === null)) {
+                $this->errors[$path . 'amount_cents'] = 'Expected either amount_cents or percent.';
+            } elseif ($amount !== null && (!is_int($amount) || $amount <= 0)) {
+                $this->errors[$path . 'amount_cents'] = 'Expected positive integer cents.';
+            } elseif ($percent !== null && (self::isInvalidDecimal($percent, 2) || (float) $percent <= 0 || (float) $percent > 100)) {
+                $this->errors[$path . 'percent'] = 'Expected a number above 0 and up to 100 with at most 2 decimals.';
+            }
+
+            $code = $this->optionalString($entry, 'reason_code', $path);
+            $knownCode = $type === 'allowances'
+                ? ctype_digit((string) $code) && ZugferdAllowanceCodes::tryFrom((int) $code) !== null
+                : ZugferdChargeCodes::tryFrom((string) $code) !== null;
+            if ($code !== null && !$knownCode) {
+                $this->errors[$path . 'reason_code'] = $type === 'allowances'
+                    ? 'Unknown allowance reason code (UNTDID 5189, e.g. 95 for a discount).'
+                    : 'Unknown charge reason code (UNTDID 7161, e.g. FC for freight).';
+            }
+
+            $adjustment = [
+                'reason' => $this->requiredString($entry, 'reason', $path),
+                'reason_code' => $code,
+                'percent' => is_numeric($percent) ? self::formatDecimal((float) $percent, 2) : null,
+                'amount_cents' => is_int($amount) ? $amount : 0,
+            ];
+            if ($withTax) {
+                $adjustment['tax'] = isset($entry['tax_rate']) || isset($entry['tax_category']) ? $this->tax($entry, $path) : null;
+            }
+            $adjustments[] = $adjustment;
+        }
+        return $adjustments;
     }
 
     /** @return array{0: string, 1: string} */
@@ -453,7 +593,8 @@ final class InvoiceNormalizer
     /** @return array{0: string, 1: string} */
     private function tax(array $item, string $prefix): array
     {
-        $rate = $item['tax_rate'] ?? 19;
+        // A category other than S defaults to the rate 0, which is the only one it allows.
+        $rate = $item['tax_rate'] ?? (strtoupper((string) ($item['tax_category'] ?? 'S')) === 'S' ? 19 : 0);
         if (!is_numeric($rate) || $rate < 0 || $rate > 100) {
             $this->errors[$prefix . 'tax_rate'] = 'Expected a percentage, e.g. 19 or 7.';
             $rate = 0;

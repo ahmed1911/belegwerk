@@ -34,6 +34,15 @@ use Twig\TwigFilter;
  *     contact_name?: string,
  *     electronic_address?: string|array{scheme: string, id: string},
  * }
+ * @phpstan-type Adjustment array{reason: string, amount_cents?: int, percent?: int|float|numeric-string, reason_code?: string}
+ * @phpstan-type InvoiceAdjustment array{
+ *     reason: string,
+ *     amount_cents?: int,
+ *     percent?: int|float|numeric-string,
+ *     reason_code?: string,
+ *     tax_rate?: int|float|numeric-string,
+ *     tax_category?: 'S'|'Z'|'E'|'AE'|'K'|'G',
+ * }
  * @phpstan-type Item array{
  *     description: string,
  *     unit_price_cents: int,
@@ -43,6 +52,8 @@ use Twig\TwigFilter;
  *     unit_code?: string,
  *     tax_rate?: int|float|numeric-string,
  *     tax_category?: 'S'|'Z'|'E'|'AE'|'K'|'G',
+ *     allowances?: list<Adjustment>,
+ *     charges?: list<Adjustment>,
  *     custom?: array<string, mixed>,
  * }
  * @phpstan-type InvoiceData array{
@@ -66,6 +77,8 @@ use Twig\TwigFilter;
  *     tax_exemption_reason?: string,
  *     cash_discount?: array{days: int, percent: int|float|numeric-string},
  *     paid_cents?: int,
+ *     allowances?: list<InvoiceAdjustment>,
+ *     charges?: list<InvoiceAdjustment>,
  *     custom?: array<string, mixed>,
  * }
  */

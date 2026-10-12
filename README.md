@@ -110,11 +110,26 @@ misspelled optional keys.
 | `direct_debit.mandate_reference`, `.creditor_id`, `.iban` | | SEPA direct debit (payment means 59) from the buyer's account instead of a transfer |
 | `cash_discount.days`, `cash_discount.percent` | | Cash discount (Skonto) on the amount due, written as `#SKONTO#TAGE=…#PROZENT=…#` (XRechnung) |
 | `paid_cents` | | Amount already paid (BT-113); the amount due becomes `gross − paid` |
-| `items[]` | yes | `description`, `unit_price_cents`, optional `quantity` (default 1, max. 6 decimals), `name`, `unit`, `unit_code`, `tax_rate` (default 19), `tax_category`, `custom` |
+| `allowances[]`, `charges[]` | | Allowances (discounts) and charges (e.g. shipping) on the whole invoice, see below |
+| `items[]` | yes | `description`, `unit_price_cents`, optional `quantity` (default 1, max. 6 decimals), `name`, `unit`, `unit_code`, `tax_rate` (default 19), `tax_category`, `allowances[]`, `charges[]`, `custom` |
 | `custom` | | Free-form data for templates, passed through unchanged |
 
 **Units:** `unit` accepts common German names (`Stk`, `Std`, `Tag`, `Monat`, `pauschal`, `km`, `kg`, …) or a UN/ECE Rec. 20/21
 code (`H87`, `HUR`, `DAY`, `LS`, …). Other names need a `unit_code`.
+
+**Allowances and charges:** each entry has a `reason` and either `amount_cents` or `percent` (up to 2 decimals),
+optionally a `reason_code` (UNTDID 5189 for allowances, e.g. `95` discount; UNTDID 7161 for charges, e.g. `FC` freight).
+On an item they change the line amount: `round(quantity × unit_price_cents) − allowances + charges`, with percentages
+of `round(quantity × unit_price_cents)`. On the whole invoice they change the tax base and may name `tax_rate` and
+`tax_category`. Without them, a percentage applies to the line amounts of every VAT rate (one entry per rate in the
+result), and an amount takes the VAT rate of the lines if they all have the same one.
+
+```json
+"items": [{"description": "Beratung", "quantity": 10, "unit": "Std", "unit_price_cents": 9000,
+           "allowances": [{"reason": "Mengenrabatt", "percent": 10}]}],
+"allowances": [{"reason": "Treuerabatt", "percent": 3}],
+"charges": [{"reason": "Versand", "amount_cents": 490, "tax_rate": 19, "reason_code": "FC"}]
+```
 
 **VAT categories:** `S` (standard, rate > 0), `Z` (zero rated), `E` (exempt), `AE` (reverse charge),
 `K` (intra-community supply), `G` (export). All but `S` require `tax_rate: 0`.
@@ -155,9 +170,10 @@ For `invoice()` the template receives the validated and calculated invoice:
 | `buyer_reference`, `order_reference`, `preceding_invoice`, `payment_terms`, `note`, `tax_exemption_reason` | As passed in, or `null` |
 | `seller`, `buyer`, `bank`, `direct_debit` | As passed in; IBANs without spaces; `bank` is `null` if omitted with a direct debit |
 | `cash_discount` | `days`, `percent`, calculated `date`, `amount_cents`, `payable_cents`; or `null` |
-| `lines[]` | `id`, `name`, `description`, `quantity` (up to 6 decimals), `unit`, `unit_code`, `unit_price_cents`, `net_cents`, `tax_category`, `tax_rate`, `custom` |
+| `lines[]` | `id`, `name`, `description`, `quantity` (up to 6 decimals), `unit`, `unit_code`, `unit_price_cents`, `subtotal_cents` (quantity × price), `allowances[]`, `charges[]`, `net_cents`, `tax_category`, `tax_rate`, `custom` |
+| `allowances[]`, `charges[]` | `reason`, `reason_code`, `percent`, `base_cents`, `amount_cents`, `tax_category`, `tax_rate` (on lines without the tax fields) |
 | `tax_groups[]` | `category`, `rate`, `base_cents`, `amount_cents`, `exemption_reason` |
-| `totals` | `net_cents`, `tax_cents`, `gross_cents`, `paid_cents`, `due_cents` |
+| `totals` | `line_total_cents` (sum of `lines[].net_cents`), `allowance_total_cents`, `charge_total_cents`, `net_cents` (tax base), `tax_cents`, `gross_cents`, `paid_cents`, `due_cents` |
 | `custom` | Your free-form data |
 
 For `document()` the context is the array you pass, merged into the defaults. It may only contain arrays and scalars.
@@ -262,13 +278,13 @@ horstoeko's `ZugferdKositValidator`, which also supports a remote KoSIT daemon.
 
 ## Not supported (yet)
 
-Allowances and charges, payment by card or cash, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
+Payment by card or cash, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
 e-invoices.
 
 ## Tested with
 
-- XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note and a negative
-  line: accepted by the official KoSIT validator with the XRechnung 3.0.2 configuration (EN 16931 CII rules 1.3.16,
+- XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note, a negative
+  line and allowances and charges: accepted by the official KoSIT validator with the XRechnung 3.0.2 configuration (EN 16931 CII rules 1.3.16,
   part of the test suite)
 - ZUGFeRD PDFs from `invoice()`: PDF/A-3b valid according to veraPDF (part of the test suite), embedded XML checked
   against the XSD schema on every call

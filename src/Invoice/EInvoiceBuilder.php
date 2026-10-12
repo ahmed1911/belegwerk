@@ -109,6 +109,20 @@ final class EInvoiceBuilder
             $directDebit['mandate_reference'] ?? null,
         );
 
+        foreach (['allowances' => false, 'charges' => true] as $type => $isCharge) {
+            foreach ($invoice[$type] as $adjustment) {
+                $document->addDocumentAllowanceCharge(
+                    $amount($adjustment['amount_cents']),
+                    $isCharge,
+                    $adjustment['tax_category'],
+                    'VAT',
+                    (float) $adjustment['tax_rate'],
+                    null,
+                    ...self::adjustmentDetails($adjustment),
+                );
+            }
+        }
+
         foreach ($invoice['tax_groups'] as $group) {
             $document->addDocumentTax(
                 $group['category'],
@@ -124,9 +138,9 @@ final class EInvoiceBuilder
         $document->setDocumentSummation(
             $amount($totals['gross_cents']),
             $amount($totals['due_cents']),
-            $amount($totals['net_cents']),
-            null,
-            null,
+            $amount($totals['line_total_cents']),
+            $totals['charge_total_cents'] !== 0 ? $amount($totals['charge_total_cents']) : null,
+            $totals['allowance_total_cents'] !== 0 ? $amount($totals['allowance_total_cents']) : null,
             $amount($totals['net_cents']),
             $amount($totals['tax_cents']),
             null,
@@ -146,8 +160,27 @@ final class EInvoiceBuilder
                 ->setDocumentPositionQuantity(($negative ? -1 : 1) * (float) $line['quantity'], $line['unit_code'])
                 ->addDocumentPositionTax($line['tax_category'], 'VAT', (float) $line['tax_rate'])
                 ->setDocumentPositionLineSummation($amount($line['net_cents']));
+            foreach (['allowances' => false, 'charges' => true] as $type => $isCharge) {
+                foreach ($line[$type] as $adjustment) {
+                    [$percent, $basis, , , $reasonCode, $reason] = self::adjustmentDetails($adjustment);
+                    $document->addDocumentPositionAllowanceCharge($amount($adjustment['amount_cents']), $isCharge, $percent, $basis, $reasonCode, $reason);
+                }
+            }
         }
         return $document;
+    }
+
+    /** Percentage, base amount, base quantity and its unit, reason code and reason of an allowance or charge. */
+    private static function adjustmentDetails(array $adjustment): array
+    {
+        return [
+            $adjustment['percent'] !== null ? (float) $adjustment['percent'] : null,
+            $adjustment['base_cents'] !== null ? $adjustment['base_cents'] / 100 : null,
+            null,
+            null,
+            $adjustment['reason_code'],
+            $adjustment['reason'],
+        ];
     }
 
     /** Arguments of set{Seller,Buyer}Address: lines one to three, zip, city, country. */

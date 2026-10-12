@@ -15,6 +15,16 @@ final class InvoiceNormalizerTest extends TestCase
         return json_decode((string) file_get_contents(__DIR__ . '/../examples/invoice.json'), true, 64, JSON_THROW_ON_ERROR);
     }
 
+    /** Allowances and charges on lines and on the whole invoice, across both VAT rates of the example. */
+    public static function withAllowancesAndCharges(array $data): array
+    {
+        $data['items'][0]['allowances'] = [['reason' => 'Treuerabatt', 'percent' => 10]];
+        $data['items'][1]['charges'] = [['reason' => 'Expresszuschlag', 'amount_cents' => 500]];
+        $data['allowances'] = [['reason' => 'Rabatt', 'percent' => 5, 'reason_code' => '95']];
+        $data['charges'] = [['reason' => 'Versand', 'amount_cents' => 490, 'tax_rate' => 19, 'reason_code' => 'FC']];
+        return $data;
+    }
+
     /** Sets every item to rate 0 and the given VAT category. */
     public static function zeroRated(array $data, string $category): array
     {
@@ -35,7 +45,7 @@ final class InvoiceNormalizerTest extends TestCase
             ['category' => 'S', 'rate' => '19', 'base_cents' => 82990, 'amount_cents' => 15768, 'exemption_reason' => null],
             ['category' => 'S', 'rate' => '7', 'base_cents' => 6990, 'amount_cents' => 489, 'exemption_reason' => null],
         ], $invoice['tax_groups']);
-        self::assertSame(['net_cents' => 89980, 'tax_cents' => 16257, 'gross_cents' => 106237, 'paid_cents' => 0, 'due_cents' => 106237], $invoice['totals']);
+        self::assertSame(['line_total_cents' => 89980, 'allowance_total_cents' => 0, 'charge_total_cents' => 0, 'net_cents' => 89980, 'tax_cents' => 16257, 'gross_cents' => 106237, 'paid_cents' => 0, 'due_cents' => 106237], $invoice['totals']);
         self::assertSame('2026-09-24', $invoice['date']);
         self::assertSame('DE89370400440532013000', $invoice['bank']['iban']);
         self::assertSame(['scheme' => 'EM', 'id' => 'eingangsrechnung@beispielstadt.de'], $invoice['buyer']['electronic_address']);
@@ -89,6 +99,59 @@ final class InvoiceNormalizerTest extends TestCase
             ['days' => 14, 'percent' => '2.5', 'date' => '2026-10-08', 'amount_cents' => 2500, 'payable_cents' => 97500],
             $invoice['cash_discount'],
         );
+    }
+
+    public function testAllowancesAndChargesReduceOrRaiseTheTaxBase(): void
+    {
+        $invoice = (new InvoiceNormalizer())->normalize(self::withAllowancesAndCharges(self::example()));
+
+        self::assertSame([78000, 4990, 6990], array_column($invoice['lines'], 'subtotal_cents'));
+        self::assertSame([70200, 5490, 6990], array_column($invoice['lines'], 'net_cents'));
+        self::assertSame(
+            [['reason' => 'Treuerabatt', 'reason_code' => null, 'percent' => '10', 'base_cents' => 78000, 'amount_cents' => 7800]],
+            $invoice['lines'][0]['allowances'],
+        );
+        // The percentage applies to each tax group of the lines: 5 % of 756.90 € and of 69.90 €.
+        self::assertSame([
+            ['reason' => 'Rabatt', 'reason_code' => '95', 'percent' => '5', 'base_cents' => 75690, 'amount_cents' => 3785, 'tax_category' => 'S', 'tax_rate' => '19'],
+            ['reason' => 'Rabatt', 'reason_code' => '95', 'percent' => '5', 'base_cents' => 6990, 'amount_cents' => 350, 'tax_category' => 'S', 'tax_rate' => '7'],
+        ], $invoice['allowances']);
+        self::assertSame([72395, 6640], array_column($invoice['tax_groups'], 'base_cents'));
+        self::assertSame([13755, 465], array_column($invoice['tax_groups'], 'amount_cents'));
+        self::assertSame([
+            'line_total_cents' => 82680, 'allowance_total_cents' => 4135, 'charge_total_cents' => 490,
+            'net_cents' => 79035, 'tax_cents' => 14220, 'gross_cents' => 93255, 'paid_cents' => 0, 'due_cents' => 93255,
+        ], $invoice['totals']);
+    }
+
+    public function testAllowanceAmountTakesTheTaxOfTheLines(): void
+    {
+        $data = self::zeroRated(self::example(), 'E');
+        $data['tax_exemption_reason'] = 'Kleinunternehmer gemäß § 19 UStG';
+        $data['allowances'] = [['reason' => 'Gutschein', 'amount_cents' => 1000]];
+
+        $invoice = (new InvoiceNormalizer())->normalize($data);
+
+        self::assertSame(['E', '0'], [$invoice['allowances'][0]['tax_category'], $invoice['allowances'][0]['tax_rate']]);
+        self::assertSame(88980, $invoice['totals']['gross_cents']);
+    }
+
+    public function testRejectsInvalidAllowancesAndCharges(): void
+    {
+        $data = self::example();
+        $data['items'][0]['allowances'] = [['reason' => 'Rabatt', 'percent' => 10, 'amount_cents' => 100]];
+        $data['allowances'] = [['percent' => 0], ['reason' => 'Rabatt', 'amount_cents' => 100, 'reason_code' => 'FC']];
+        $data['charges'] = 'Versand';
+
+        self::assertEqualsCanonicalizing([
+            'items.0.allowances.0.amount_cents', 'allowances.0.percent', 'allowances.0.reason',
+            'allowances.1.reason_code', 'charges',
+        ], array_keys(self::errors($data)));
+
+        // An amount needs a VAT rate when the lines have several; a percentage needs lines with the given rate.
+        $data = self::example();
+        $data['allowances'] = [['reason' => 'Gutschein', 'amount_cents' => 1000], ['reason' => 'Rabatt', 'percent' => 3, 'tax_rate' => 16]];
+        self::assertSame(['allowances.0.tax_rate', 'allowances.1.tax_rate'], array_keys(self::errors($data)));
     }
 
     public function testDirectDebitMakesTheSellerBankOptional(): void

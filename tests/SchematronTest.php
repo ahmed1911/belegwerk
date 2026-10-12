@@ -57,8 +57,11 @@ final class SchematronTest extends TestCase
         $negativeLine = $standard;
         $negativeLine['items'][] = ['description' => 'Korrektur', 'unit' => 'LS', 'unit_price_cents' => -1000];
 
+        $allowancesAndCharges = InvoiceNormalizerTest::withAllowancesAndCharges($standard);
+
         return [
             'standard' => [$standard],
+            'allowances and charges' => [$allowancesAndCharges],
             'small business (§ 19 UStG)' => [$smallBusiness],
             'reverse charge' => [$reverseCharge],
             'credit note' => [$creditNote],
