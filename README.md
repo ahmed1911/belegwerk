@@ -174,6 +174,7 @@ For `invoice()` the template receives the validated and calculated invoice:
 | `allowances[]`, `charges[]` | `reason`, `reason_code`, `percent`, `base_cents`, `amount_cents`, `tax_category`, `tax_rate` (on lines without the tax fields) |
 | `tax_groups[]` | `category`, `rate`, `base_cents`, `amount_cents`, `exemption_reason` |
 | `totals` | `line_total_cents` (sum of `lines[].net_cents`), `allowance_total_cents`, `charge_total_cents`, `net_cents` (tax base), `tax_cents`, `gross_cents`, `paid_cents`, `due_cents` |
+| `payment_qr` | GiroCode (EPC QR code) as an SVG data URI for `<img src>`: banking apps fill in recipient, IBAN, amount due and invoice number. `null` with a direct debit or nothing left to pay |
 | `custom` | Your free-form data |
 
 For `document()` the context is the array you pass, merged into the defaults. It may only contain arrays and scalars.

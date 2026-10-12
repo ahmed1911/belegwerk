@@ -7,6 +7,7 @@ namespace Belegwerk\Tests;
 use Belegwerk\Belegwerk;
 use Belegwerk\Invoice\EInvoiceBuilder;
 use Belegwerk\Invoice\InvoiceNormalizer;
+use Belegwerk\Invoice\PaymentQrCode;
 use Belegwerk\Invoice\ValidationException;
 use horstoeko\zugferd\ZugferdDocumentReader;
 use horstoeko\zugferd\ZugferdProfiles;
@@ -170,6 +171,26 @@ final class EInvoiceBuilderTest extends TestCase
         $this->expectException(ValidationException::class);
         $this->expectExceptionMessage('seller.phone: Required for XRechnung.');
         $this->belegwerk()->xrechnung($data);
+    }
+
+    public function testGiroCodeTransfersTheAmountDue(): void
+    {
+        $data = InvoiceNormalizerTest::example();
+        $data['paid_cents'] = 6237;
+        $invoice = (new InvoiceNormalizer())->normalize($data);
+
+        self::assertSame(
+            "BCD\n002\n1\nSCT\nCOBADEFFXXX\nMusterfirma GmbH\nDE89370400440532013000\nEUR1000.00\n\n\nRE-2026-0042",
+            PaymentQrCode::payload($invoice),
+        );
+        self::assertStringStartsWith('data:image/svg+xml;base64,', (string) PaymentQrCode::dataUri($invoice));
+
+        $data['paid_cents'] = 106237;
+        self::assertNull(PaymentQrCode::dataUri((new InvoiceNormalizer())->normalize($data)), 'nothing left to pay');
+
+        $data = InvoiceNormalizerTest::example();
+        $data['direct_debit'] = ['mandate_reference' => 'M-7', 'creditor_id' => 'DE98ZZZ09999999999', 'iban' => 'DE02120300000000202051'];
+        self::assertNull(PaymentQrCode::dataUri((new InvoiceNormalizer())->normalize($data)), 'direct debit');
     }
 
     private function belegwerk(): Belegwerk

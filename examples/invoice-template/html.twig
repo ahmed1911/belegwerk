@@ -52,6 +52,8 @@
         .total-row span:last-child, .total-row strong:last-child { text-align: right; }
         .grand-total { border-top: .7mm solid #999; padding-top: 2mm; margin-top: 1mm; }
         .payment-info { margin-top: 8mm; break-inside: avoid; page-break-inside: avoid; overflow-wrap: anywhere; }
+        .payment-qr { display: flex; align-items: center; gap: 4mm; }
+        .payment-qr img { width: 20mm; height: 20mm; flex: none; }
         .tax-note { margin: 3mm 0 0; font-size: 9pt; overflow-wrap: anywhere; }
     </style>
 </head>
@@ -141,8 +143,9 @@
         Der Gesamtbetrag wird zum {{ due_date|date('d.m.Y') }} per SEPA-Lastschrift (Mandat {{ direct_debit.mandate_reference }}) eingezogen.
     </section>
     {% elseif bank %}
-    <section class="payment-info">
-        Bitte überweisen Sie den Gesamtbetrag bis zum {{ due_date|date('d.m.Y') }} auf das unten genannte Konto von {{ bank.holder }}.
+    <section class="payment-info{% if payment_qr %} payment-qr{% endif %}">
+        {% if payment_qr %}<img src="{{ payment_qr }}" alt="GiroCode">{% endif %}
+        <span>Bitte überweisen Sie {% if totals.paid_cents > 0 %}den offenen Betrag von {{ totals.due_cents|money }}{% else %}den Gesamtbetrag{% endif %} bis zum {{ due_date|date('d.m.Y') }} auf das unten genannte Konto von {{ bank.holder }}.{% if payment_qr %} Oder scannen Sie den Code mit Ihrer Banking-App.{% endif %}</span>
     </section>
     {% endif %}
 </body>

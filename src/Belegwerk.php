@@ -7,6 +7,7 @@ namespace Belegwerk;
 use Belegwerk\Gotenberg\GotenbergClient;
 use Belegwerk\Invoice\EInvoiceBuilder;
 use Belegwerk\Invoice\InvoiceNormalizer;
+use Belegwerk\Invoice\PaymentQrCode;
 use horstoeko\zugferd\ZugferdDocumentPdfMerger;
 use horstoeko\zugferd\ZugferdProfiles;
 use Twig\Environment;
@@ -120,7 +121,9 @@ final class Belegwerk
         $invoice = $this->normalized($invoice);
         $xml = $this->builder->toXml($invoice, ZugferdProfiles::PROFILE_EN16931);
 
-        return (new ZugferdDocumentPdfMerger($xml, $this->render($template, $invoice)))
+        $context = $invoice + ['payment_qr' => PaymentQrCode::dataUri($invoice)];
+
+        return (new ZugferdDocumentPdfMerger($xml, $this->render($template, $context)))
             ->setAdditionalCreatorTool('belegwerk')
             ->setAttachmentRelationshipTypeToAlternative()
             ->generateDocument()
