@@ -8,6 +8,7 @@ use Belegwerk\Gotenberg\GotenbergClient;
 use Belegwerk\Invoice\EInvoiceBuilder;
 use Belegwerk\Invoice\InvoiceNormalizer;
 use horstoeko\zugferd\ZugferdDocumentPdfMerger;
+use horstoeko\zugferd\ZugferdProfiles;
 use Twig\Environment;
 use Twig\Loader\ArrayLoader;
 use Twig\Sandbox\Sandbox;
@@ -103,8 +104,8 @@ final class Belegwerk
      */
     public function invoice(array $invoice, Template $template): string
     {
-        $invoice = $this->normalizer->normalize($this->withDefaults($invoice));
-        $xml = $this->builder->toXml($invoice, EInvoiceBuilder::PROFILE_EN16931);
+        $invoice = $this->normalized($invoice);
+        $xml = $this->builder->toXml($invoice, ZugferdProfiles::PROFILE_EN16931);
 
         return (new ZugferdDocumentPdfMerger($xml, $this->render($template, $invoice)))
             ->setAdditionalCreatorTool('belegwerk')
@@ -120,9 +121,9 @@ final class Belegwerk
      */
     public function xrechnung(array $invoice): string
     {
-        $invoice = $this->normalizer->normalize($this->withDefaults($invoice));
+        $invoice = $this->normalized($invoice);
         $this->normalizer->assertXRechnung($invoice);
-        return $this->builder->toXml($invoice, EInvoiceBuilder::PROFILE_XRECHNUNG);
+        return $this->builder->toXml($invoice, ZugferdProfiles::PROFILE_XRECHNUNG_3);
     }
 
     /**
@@ -130,12 +131,12 @@ final class Belegwerk
      */
     public function document(Template $template, array $data = []): string
     {
-        return $this->render($template, $this->withDefaults($data));
+        return $this->render($template, array_replace_recursive($this->defaults, $data));
     }
 
-    private function withDefaults(array $data): array
+    private function normalized(array $invoice): array
     {
-        return array_replace_recursive($this->defaults, $data);
+        return $this->normalizer->normalize(array_replace_recursive($this->defaults, $invoice));
     }
 
     private function render(Template $template, array $context): string
@@ -162,10 +163,6 @@ final class Belegwerk
             $files[$name] = $sandbox->render($name, $context);
         }
 
-        return $this->gotenberg->convertHtml($files, [
-            'preferCssPageSize' => 'true',
-            'printBackground' => 'true',
-            'failOnResourceLoadingFailed' => 'true',
-        ]);
+        return $this->gotenberg->convertHtml($files);
     }
 }

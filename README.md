@@ -157,7 +157,7 @@ Read optional data such as `custom` fields with `default` or `is defined`:
 ```twig
 {% if custom.project|default %}Projekt: {{ custom.project }}{% endif %}
 {{ custom.section_title|default('Leistungen') }}
-{% if bank %}IBAN {{ bank.iban }}{% endif %}   {# bank is null with a direct debit #}
+{% if not direct_debit %}IBAN {{ bank.iban }}{% endif %}   {# bank may be null with a direct debit #}
 ```
 
 The example template reads these optional `custom` fields: `logo` (data URI), `legal` (list of lines for the footer,

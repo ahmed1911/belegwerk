@@ -24,30 +24,28 @@ use Symfony\Component\Validator\Validation;
 final class InvoiceNormalizer
 {
     /** Invoice type codes (UNTDID 1001) allowed by XRechnung. */
-    public const TYPE_CODES = ['326', '380', '381', '384', '389', '875', '876', '877'];
+    private const TYPE_CODES = ['326', '380', '381', '384', '389', '875', '876', '877'];
 
     /** Supported VAT categories (UNTDID 5305). */
-    public const TAX_CATEGORIES = ['S', 'Z', 'E', 'AE', 'K', 'G'];
+    private const TAX_CATEGORIES = ['S', 'Z', 'E', 'AE', 'K', 'G'];
 
-    /** Units (UN/ECE Rec. 20) with their German display label. */
-    public const UNITS = [
+    /** Units (UN/ECE Rec. 20) with their German display label; the labels are accepted as input, too. */
+    private const UNITS = [
         'H87' => 'Stk.', 'C62' => 'Stk.', 'HUR' => 'Std.', 'MIN' => 'Min.', 'DAY' => 'Tag(e)', 'WEE' => 'Woche(n)',
         'MON' => 'Monat(e)', 'ANN' => 'Jahr(e)', 'LS' => 'pauschal', 'KGM' => 'kg', 'GRM' => 'g', 'TNE' => 't',
         'MTR' => 'm', 'KMT' => 'km', 'MTK' => 'm²', 'MTQ' => 'm³', 'LTR' => 'l', 'KWH' => 'kWh', 'SET' => 'Set',
         'PR' => 'Paar', 'XPK' => 'Paket',
     ];
 
-    /** Common German unit names and their code. */
+    /** Common German unit names besides the labels in UNITS, and their code. */
     private const UNIT_ALIASES = [
-        'stk' => 'H87', 'stk.' => 'H87', 'stück' => 'H87', 'st' => 'H87', 'st.' => 'H87', 'x' => 'C62',
-        'std' => 'HUR', 'std.' => 'HUR', 'stunde' => 'HUR', 'stunden' => 'HUR', 'h' => 'HUR',
-        'min' => 'MIN', 'min.' => 'MIN', 'minute' => 'MIN', 'minuten' => 'MIN',
-        'tag' => 'DAY', 'tage' => 'DAY', 'tag(e)' => 'DAY', 'woche' => 'WEE', 'wochen' => 'WEE',
-        'monat' => 'MON', 'monate' => 'MON', 'monat(e)' => 'MON', 'jahr' => 'ANN', 'jahre' => 'ANN',
-        'pauschal' => 'LS', 'pausch.' => 'LS', 'psch.' => 'LS', 'pauschale' => 'LS',
-        'kg' => 'KGM', 'g' => 'GRM', 't' => 'TNE', 'm' => 'MTR', 'km' => 'KMT', 'm2' => 'MTK', 'm²' => 'MTK',
-        'qm' => 'MTK', 'm3' => 'MTQ', 'm³' => 'MTQ', 'l' => 'LTR', 'liter' => 'LTR', 'kwh' => 'KWH',
-        'set' => 'SET', 'paar' => 'PR', 'paket' => 'XPK',
+        'stk' => 'H87', 'stück' => 'H87', 'st' => 'H87', 'st.' => 'H87', 'x' => 'C62',
+        'std' => 'HUR', 'stunde' => 'HUR', 'stunden' => 'HUR', 'h' => 'HUR',
+        'min' => 'MIN', 'minute' => 'MIN', 'minuten' => 'MIN',
+        'tag' => 'DAY', 'tage' => 'DAY', 'woche' => 'WEE', 'wochen' => 'WEE',
+        'monat' => 'MON', 'monate' => 'MON', 'jahr' => 'ANN', 'jahre' => 'ANN',
+        'pausch.' => 'LS', 'psch.' => 'LS', 'pauschale' => 'LS',
+        'm2' => 'MTK', 'qm' => 'MTK', 'm3' => 'MTQ', 'liter' => 'LTR',
     ];
 
     /** Printed on the invoice and written to the XML, hence German. */
@@ -135,10 +133,8 @@ final class InvoiceNormalizer
         if ($invoice['buyer']['electronic_address'] === null) {
             $errors['buyer.electronic_address'] = 'Required for XRechnung (e.g. an email address or the Leitweg-ID).';
         }
-        foreach (['zip', 'city'] as $key) {
-            if ($invoice['buyer']['address'][$key] === null) {
-                $errors["buyer.address.{$key}"] = 'Required for XRechnung.';
-            }
+        if ($invoice['buyer']['address']['zip'] === null) {
+            $errors['buyer.address.zip'] = 'Required for XRechnung.';
         }
         if ($errors !== []) {
             throw new ValidationException($errors);
@@ -230,9 +226,6 @@ final class InvoiceNormalizer
         if (array_intersect(['AE', 'K'], $categories) !== [] && $invoice['buyer']['vat_id'] === null) {
             $this->errors['buyer.vat_id'] = 'Required for category AE or K.';
         }
-        if ($invoice['period'] !== null && $invoice['period']['end'] < $invoice['period']['start']) {
-            $this->errors['period.end'] = 'The period ends before it starts.';
-        }
     }
 
     private function seller(mixed $data): array
@@ -296,10 +289,11 @@ final class InvoiceNormalizer
         if (ZugferdCountryCodes::tryFrom($country) === null) {
             $this->errors[$prefix . 'country'] = 'Expected an ISO 3166-1 alpha-2 code, e.g. "DE".';
         }
+        $streetAndZip = $streetRequired ? $this->requiredString(...) : $this->optionalString(...);
         return [
-            'street' => $streetRequired ? $this->requiredString($data, 'street', $prefix) : $this->optionalString($data, 'street', $prefix),
+            'street' => $streetAndZip($data, 'street', $prefix),
             'additional' => $this->optionalString($data, 'additional', $prefix),
-            'zip' => $streetRequired ? $this->requiredString($data, 'zip', $prefix) : $this->optionalString($data, 'zip', $prefix),
+            'zip' => $streetAndZip($data, 'zip', $prefix),
             'city' => $this->requiredString($data, 'city', $prefix),
             'country' => $country,
         ];
@@ -437,10 +431,13 @@ final class InvoiceNormalizer
         $code = $this->optionalString($item, 'unit_code', $prefix);
 
         if ($code === null && $unit !== null) {
-            $code = self::UNIT_ALIASES[mb_strtolower($unit)] ?? ZugferdUnitCodes::tryFrom(strtoupper($unit))?->value;
+            $lower = mb_strtolower($unit);
+            // array_search returns the first match, so "Stk." maps to H87 rather than C62.
+            $code = self::UNIT_ALIASES[$lower]
+                ?? (array_search($lower, array_map(mb_strtolower(...), self::UNITS), true) ?: null)
+                ?? ZugferdUnitCodes::tryFrom(strtoupper($unit))?->value;
             if ($code === null) {
                 $this->errors[$prefix . 'unit_code'] = "Unknown unit \"{$unit}\"; pass a unit_code (UN/ECE Rec. 20, e.g. H87, HUR, LS).";
-                $code = 'H87';
             }
         }
         $code ??= 'H87';
@@ -457,7 +454,7 @@ final class InvoiceNormalizer
     private function tax(array $item, string $prefix): array
     {
         $rate = $item['tax_rate'] ?? 19;
-        if (!is_int($rate) && !is_float($rate) && !(is_string($rate) && is_numeric($rate)) || $rate < 0 || $rate > 100) {
+        if (!is_numeric($rate) || $rate < 0 || $rate > 100) {
             $this->errors[$prefix . 'tax_rate'] = 'Expected a percentage, e.g. 19 or 7.';
             $rate = 0;
         }
@@ -485,7 +482,13 @@ final class InvoiceNormalizer
         }
         $start = $this->requiredDate($data['period'], 'start', 'period.');
         $end = $this->requiredDate($data['period'], 'end', 'period.');
-        return $start !== null && $end !== null ? ['start' => $start, 'end' => $end] : null;
+        if ($start === null || $end === null) {
+            return null;
+        }
+        if ($end < $start) {
+            $this->errors['period.end'] = 'The period ends before it starts.';
+        }
+        return ['start' => $start, 'end' => $end];
     }
 
     /** BT-25/BT-26: the invoice a credit note (381) or corrected invoice (384) refers to. */
@@ -563,7 +566,7 @@ final class InvoiceNormalizer
         return $value;
     }
 
-    public static function formatDecimal(float $value, int $decimals): string
+    private static function formatDecimal(float $value, int $decimals): string
     {
         $formatted = rtrim(rtrim(number_format($value, $decimals, '.', ''), '0'), '.');
         return $formatted === '-0' ? '0' : $formatted;

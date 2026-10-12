@@ -15,6 +15,16 @@ final class InvoiceNormalizerTest extends TestCase
         return json_decode((string) file_get_contents(__DIR__ . '/../examples/invoice.json'), true, 64, JSON_THROW_ON_ERROR);
     }
 
+    /** Sets every item to rate 0 and the given VAT category. */
+    public static function zeroRated(array $data, string $category): array
+    {
+        foreach ($data['items'] as &$item) {
+            $item['tax_rate'] = 0;
+            $item['tax_category'] = $category;
+        }
+        return $data;
+    }
+
     public function testCalculatesLinesTaxGroupsAndTotals(): void
     {
         $invoice = (new InvoiceNormalizer())->normalize(self::example());
@@ -135,12 +145,19 @@ final class InvoiceNormalizerTest extends TestCase
         $data['items'][0]['unit_code'] = 'ABC';
         $data['items'][1]['unit'] = 'KWT';
 
-        try {
-            (new InvoiceNormalizer())->normalize($data);
-            self::fail('ValidationException expected');
-        } catch (ValidationException $error) {
-            self::assertSame(['buyer.electronic_address', 'buyer.address.country', 'items.0.unit_code'], array_keys($error->errors));
-        }
+        self::assertSame(['buyer.electronic_address', 'buyer.address.country', 'items.0.unit_code'], array_keys(self::errors($data)));
+    }
+
+    public function testAcceptsTheUnitLabelsItPrints(): void
+    {
+        $data = self::example();
+        $data['items'][0]['unit'] = 'Woche(n)';
+        $data['items'][1]['unit'] = 'Stk.';
+
+        $lines = (new InvoiceNormalizer())->normalize($data)['lines'];
+
+        self::assertSame(['WEE', 'H87'], [$lines[0]['unit_code'], $lines[1]['unit_code']]);
+        self::assertSame(['Woche(n)', 'Stk.'], [$lines[0]['unit'], $lines[1]['unit']]);
     }
 
     public function testPassesCustomDataThrough(): void
@@ -160,19 +177,8 @@ final class InvoiceNormalizerTest extends TestCase
 
     public function testSmallBusinessRequiresExemptionReason(): void
     {
-        $data = self::example();
-        foreach ($data['items'] as &$item) {
-            $item['tax_rate'] = 0;
-            $item['tax_category'] = 'E';
-        }
-        unset($item);
-
-        try {
-            (new InvoiceNormalizer())->normalize($data);
-            self::fail('ValidationException expected');
-        } catch (ValidationException $error) {
-            self::assertArrayHasKey('tax_exemption_reason', $error->errors);
-        }
+        $data = self::zeroRated(self::example(), 'E');
+        self::assertArrayHasKey('tax_exemption_reason', self::errors($data));
 
         $data['tax_exemption_reason'] = 'Kleinunternehmer gemäß § 19 UStG';
         $invoice = (new InvoiceNormalizer())->normalize($data);

@@ -9,6 +9,7 @@ use Belegwerk\Invoice\EInvoiceBuilder;
 use Belegwerk\Invoice\InvoiceNormalizer;
 use Belegwerk\Invoice\ValidationException;
 use horstoeko\zugferd\ZugferdDocumentReader;
+use horstoeko\zugferd\ZugferdProfiles;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -17,11 +18,6 @@ use RuntimeException;
  */
 final class EInvoiceBuilderTest extends TestCase
 {
-    private function belegwerk(): Belegwerk
-    {
-        return new Belegwerk('http://127.0.0.1:9');
-    }
-
     public function testXRechnungXmlIsSchemaValidAndRoundTrips(): void
     {
         $xml = $this->belegwerk()->xrechnung(InvoiceNormalizerTest::example());
@@ -118,19 +114,14 @@ final class EInvoiceBuilderTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('violates the schema');
-        (new EInvoiceBuilder())->toXml($invoice, EInvoiceBuilder::PROFILE_EN16931);
+        (new EInvoiceBuilder())->toXml($invoice, ZugferdProfiles::PROFILE_EN16931);
     }
 
     public function testSmallBusinessWithoutVatIdUsesTaxNumberAsSellerIdentifier(): void
     {
-        $data = InvoiceNormalizerTest::example();
+        $data = InvoiceNormalizerTest::zeroRated(InvoiceNormalizerTest::example(), 'E');
         unset($data['seller']['vat_id']);
         $data['tax_exemption_reason'] = 'Kleinunternehmer gemäß § 19 UStG';
-        foreach ($data['items'] as &$item) {
-            $item['tax_rate'] = 0;
-            $item['tax_category'] = 'E';
-        }
-        unset($item);
 
         $xml = $this->belegwerk()->xrechnung($data);
 
@@ -160,5 +151,10 @@ final class EInvoiceBuilderTest extends TestCase
         $this->expectException(ValidationException::class);
         $this->expectExceptionMessage('seller.phone: Required for XRechnung.');
         $this->belegwerk()->xrechnung($data);
+    }
+
+    private function belegwerk(): Belegwerk
+    {
+        return new Belegwerk('http://127.0.0.1:9');
     }
 }

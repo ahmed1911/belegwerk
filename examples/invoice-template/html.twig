@@ -123,7 +123,11 @@
         {% if tax_notes %}<p class="tax-note">{{ tax_notes|join("\n")|nl2br }}</p>{% endif %}
     </section>
 
-    {% if bank %}
+    {% if direct_debit %}
+    <section class="payment-info">
+        Der Gesamtbetrag wird zum {{ due_date|date('d.m.Y') }} per SEPA-Lastschrift (Mandat {{ direct_debit.mandate_reference }}) eingezogen.
+    </section>
+    {% elseif bank %}
     <section class="payment-info">
         Bitte überweisen Sie den Gesamtbetrag bis zum {{ due_date|date('d.m.Y') }} auf das unten genannte Konto von {{ bank.holder }}.
     </section>

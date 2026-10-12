@@ -6,10 +6,8 @@ namespace Belegwerk\Invoice;
 
 use DateTimeImmutable;
 use horstoeko\zugferd\ZugferdDocumentBuilder;
-use horstoeko\zugferd\ZugferdProfiles;
 use horstoeko\zugferd\ZugferdSettings;
 use horstoeko\zugferd\ZugferdXsdValidator;
-use InvalidArgumentException;
 use RuntimeException;
 
 /**
@@ -20,18 +18,12 @@ use RuntimeException;
  */
 final class EInvoiceBuilder
 {
-    public const PROFILE_EN16931 = 'en16931';
-    public const PROFILE_XRECHNUNG = 'xrechnung';
-
-    private const PROFILES = [
-        self::PROFILE_EN16931 => ZugferdProfiles::PROFILE_EN16931,
-        self::PROFILE_XRECHNUNG => ZugferdProfiles::PROFILE_XRECHNUNG_3,
-    ];
-
     /**
      * Writes the XML and checks it against the XSD schema of the profile.
+     *
+     * @param int $profile  a ZugferdProfiles::PROFILE_* constant
      */
-    public function toXml(array $invoice, string $profile): string
+    public function toXml(array $invoice, int $profile): string
     {
         // horstoeko reads the quantity decimals globally while serializing; widen them for this invoice only.
         $originalDecimals = ZugferdSettings::getQuantityDecimals();
@@ -49,30 +41,26 @@ final class EInvoiceBuilder
         }
     }
 
-    private function build(array $invoice, string $profile): ZugferdDocumentBuilder
+    private function build(array $invoice, int $profile): ZugferdDocumentBuilder
     {
-        $profileId = self::PROFILES[$profile] ?? throw new InvalidArgumentException("Unknown profile: {$profile}");
         $amount = static fn (int $cents): float => $cents / 100;
-        $date = static fn (string $date): DateTimeImmutable => new DateTimeImmutable($date);
+        $date = static fn (?string $date): ?DateTimeImmutable => $date === null ? null : new DateTimeImmutable($date);
 
-        $document = ZugferdDocumentBuilder::createNew($profileId)
+        // horstoeko skips null values, so optional fields need no guard unless the parameter is a plain string.
+        $document = ZugferdDocumentBuilder::createNew($profile)
             ->setDocumentBusinessProcess('urn:fdc:peppol.eu:2017:poacc:billing:01:1.0')
-            ->setDocumentInformation($invoice['number'], $invoice['type_code'], $date($invoice['date']), $invoice['currency']);
+            ->setDocumentInformation($invoice['number'], $invoice['type_code'], $date($invoice['date']), $invoice['currency'])
+            ->setDocumentBuyerReference($invoice['buyer_reference'])
+            ->setDocumentBuyerOrderReferencedDocument($invoice['order_reference']);
         if ($invoice['note'] !== null) {
             $document->addDocumentNote($invoice['note']);
-        }
-        if ($invoice['buyer_reference'] !== null) {
-            $document->setDocumentBuyerReference($invoice['buyer_reference']);
-        }
-        if ($invoice['order_reference'] !== null) {
-            $document->setDocumentBuyerOrderReferencedDocument($invoice['order_reference']);
         }
         if ($invoice['preceding_invoice'] !== null) {
             $preceding = $invoice['preceding_invoice'];
             $document->addDocumentInvoiceReferencedDocument(
                 $preceding['number'],
                 null,
-                $preceding['date'] !== null ? $date($preceding['date']) : null,
+                $date($preceding['date']),
             );
         }
 
@@ -80,51 +68,23 @@ final class EInvoiceBuilder
         $document
             // BR-CO-26 needs a seller identifier; without a VAT ID the tax number serves as one (FeRD example E13_01).
             ->setDocumentSeller($seller['name'], $seller['vat_id'] === null ? $seller['tax_number'] : null)
-            ->setDocumentSellerAddress(
-                $seller['address']['street'],
-                $seller['address']['additional'],
-                null,
-                $seller['address']['zip'],
-                $seller['address']['city'],
-                $seller['address']['country'],
-            )
-            ->setDocumentSellerContact($seller['contact_name'], null, $seller['phone'], null, $seller['email']);
-        if ($seller['vat_id'] !== null) {
-            $document->addDocumentSellerTaxRegistration('VA', $seller['vat_id']);
-        }
-        if ($seller['tax_number'] !== null) {
-            $document->addDocumentSellerTaxRegistration('FC', $seller['tax_number']);
-        }
-        if ($seller['electronic_address'] !== null) {
-            $document->setDocumentSellerCommunication($seller['electronic_address']['scheme'], $seller['electronic_address']['id']);
-        }
+            ->setDocumentSellerAddress(...self::address($seller['address']))
+            ->setDocumentSellerContact($seller['contact_name'], null, $seller['phone'], null, $seller['email'])
+            ->addDocumentSellerTaxRegistration('VA', $seller['vat_id'])
+            ->addDocumentSellerTaxRegistration('FC', $seller['tax_number'])
+            ->setDocumentSellerCommunication($seller['electronic_address']['scheme'] ?? null, $seller['electronic_address']['id'] ?? null);
 
         $buyer = $invoice['buyer'];
         $document
             ->setDocumentBuyer($buyer['name'])
-            ->setDocumentBuyerAddress(
-                $buyer['address']['street'],
-                $buyer['address']['additional'],
-                null,
-                $buyer['address']['zip'],
-                $buyer['address']['city'],
-                $buyer['address']['country'],
-            );
+            ->setDocumentBuyerAddress(...self::address($buyer['address']))
+            ->addDocumentBuyerTaxRegistration('VA', $buyer['vat_id'])
+            ->setDocumentBuyerCommunication($buyer['electronic_address']['scheme'] ?? null, $buyer['electronic_address']['id'] ?? null)
+            ->setDocumentSupplyChainEvent($date($invoice['service_date']))
+            ->setDocumentBillingPeriod($date($invoice['period']['start'] ?? null), $date($invoice['period']['end'] ?? null), null);
+        // The contact setter does not skip null; it would add an empty contact.
         if ($buyer['contact_name'] !== null) {
             $document->setDocumentBuyerContact($buyer['contact_name'], null, null, null, null);
-        }
-        if ($buyer['vat_id'] !== null) {
-            $document->addDocumentBuyerTaxRegistration('VA', $buyer['vat_id']);
-        }
-        if ($buyer['electronic_address'] !== null) {
-            $document->setDocumentBuyerCommunication($buyer['electronic_address']['scheme'], $buyer['electronic_address']['id']);
-        }
-
-        if ($invoice['service_date'] !== null) {
-            $document->setDocumentSupplyChainEvent($date($invoice['service_date']));
-        }
-        if ($invoice['period'] !== null) {
-            $document->setDocumentBillingPeriod($date($invoice['period']['start']), $date($invoice['period']['end']), null);
         }
 
         $directDebit = $invoice['direct_debit'];
@@ -188,6 +148,12 @@ final class EInvoiceBuilder
                 ->setDocumentPositionLineSummation($amount($line['net_cents']));
         }
         return $document;
+    }
+
+    /** Arguments of set{Seller,Buyer}Address: lines one to three, zip, city, country. */
+    private static function address(array $address): array
+    {
+        return [$address['street'], $address['additional'], null, $address['zip'], $address['city'], $address['country']];
     }
 
     /** BT-20 lands in the XML and is read by people, hence German. The cash discount line is prepended separately. */

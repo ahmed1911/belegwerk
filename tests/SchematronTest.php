@@ -25,19 +25,11 @@ final class SchematronTest extends TestCase
     {
         $standard = InvoiceNormalizerTest::example();
 
-        $zeroRated = static function (array $invoice, string $category): array {
-            foreach ($invoice['items'] as &$item) {
-                $item['tax_rate'] = 0;
-                $item['tax_category'] = $category;
-            }
-            return $invoice;
-        };
-
-        $smallBusiness = $zeroRated($standard, 'E');
+        $smallBusiness = InvoiceNormalizerTest::zeroRated($standard, 'E');
         unset($smallBusiness['seller']['vat_id']);
         $smallBusiness['tax_exemption_reason'] = 'Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG.';
 
-        $reverseCharge = $zeroRated($standard, 'AE');
+        $reverseCharge = InvoiceNormalizerTest::zeroRated($standard, 'AE');
         $reverseCharge['buyer']['vat_id'] = 'ATU12345678';
         $reverseCharge['buyer']['address'] = ['street' => 'Ring 1', 'zip' => '1010', 'city' => 'Wien', 'country' => 'AT'];
 

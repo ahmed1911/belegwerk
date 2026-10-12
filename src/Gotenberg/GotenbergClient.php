@@ -18,15 +18,14 @@ final class GotenbergClient
     }
 
     /**
-     * @param array<string, string> $files   file name => HTML, must contain index.html
-     * @param array<string, string> $fields  additional form fields, e.g. preferCssPageSize
+     * @param array<string, string> $files  file name => HTML, must contain index.html
      */
-    public function convertHtml(array $files, array $fields): string
+    public function convertHtml(array $files): string
     {
-        // Gotenberg takes every uploaded file regardless of its field name; PHP arrays need unique keys.
-        $body = $fields;
-        foreach (array_keys($files) as $i => $name) {
-            $body["files[{$i}]"] = new CURLStringFile($files[$name], $name, 'text/html');
+        $body = ['preferCssPageSize' => 'true', 'printBackground' => 'true', 'failOnResourceLoadingFailed' => 'true'];
+        // Gotenberg takes every uploaded file regardless of its field name.
+        foreach ($files as $name => $html) {
+            $body[$name] = new CURLStringFile($html, $name, 'text/html');
         }
 
         $curl = curl_init(rtrim($this->url, '/') . '/forms/chromium/convert/html');
