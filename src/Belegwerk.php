@@ -76,7 +76,7 @@ final class Belegwerk
     private const ALLOWED_FILTERS = [
         'escape', 'e', 'raw', 'upper', 'lower', 'capitalize', 'title', 'trim', 'nl2br', 'striptags', 'replace',
         'format', 'number_format', 'round', 'abs', 'date', 'default', 'length', 'first', 'last', 'join', 'split',
-        'slice', 'keys', 'merge', 'batch', 'column', 'money',
+        'slice', 'keys', 'merge', 'batch', 'column', 'money', 'asset',
     ];
 
     private readonly GotenbergClient $gotenberg;
@@ -139,8 +139,13 @@ final class Belegwerk
         return $this->normalizer->normalize(array_replace_recursive($this->defaults, $invoice));
     }
 
+    /**
+     * The template's own defaults only reach the template context. They never change the invoice XML, because
+     * templates may come from untrusted users.
+     */
     private function render(Template $template, array $context): string
     {
+        $context = array_replace_recursive($template->defaults, $context);
         $sources = array_filter([
             'index.html' => $template->html,
             'header.html' => $template->header,
@@ -154,6 +159,7 @@ final class Belegwerk
             'money',
             static fn (int|float $cents): string => number_format($cents / 100, 2, ',', '.') . ' €',
         ));
+        $twig->addFilter(new TwigFilter('asset', $template->assetUri(...)));
         $policy = new SecurityPolicy(self::ALLOWED_TAGS, self::ALLOWED_FILTERS);
         $policy->setStrict(true);
         $sandbox = new Sandbox($twig, $policy);

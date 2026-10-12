@@ -50,7 +50,8 @@ $belegwerk = new Belegwerk('http://127.0.0.1:3000', defaults: [
     'custom' => ['logo' => 'data:image/png;base64,...'],
 ]);
 
-// Templates live in your project: a directory with html.twig (optional header.twig, footer.twig) ...
+// Templates live in your project: a directory with html.twig (optional header.twig, footer.twig, partials/,
+// assets/ and defaults.json) ...
 $template = Template::fromDirectory(__DIR__ . '/templates/invoice');
 
 $invoice = [
@@ -126,9 +127,20 @@ A `Template` has up to three Twig sources, each a complete HTML document:
 - `header`, `footer` (optional): repeated on every page by Chromium. Elements with the classes `pageNumber` and
   `totalPages` are filled in. Header and footer need their own inline styles and must fit into the page margins.
 
-Create one from strings (`new Template($html, $header, $footer)`) or from a directory with `html.twig`, `header.twig`
-and `footer.twig` (`Template::fromDirectory()`). The directory loader also exposes files in `partials/*.twig` as
-`partials/<name>.twig` includes. Includes can only load partials supplied with the template.
+Create one from strings (`new Template($html, $header, $footer)`) or from a directory (`Template::fromDirectory()`):
+
+```
+templates/invoice/
+  html.twig            required
+  header.twig          optional
+  footer.twig          optional
+  partials/*.twig      includes, e.g. {% include 'partials/styles.twig' %}
+  assets/*             images and fonts, e.g. {{ 'logo.png'|asset }}
+  defaults.json        values for optional fields, e.g. {"custom": {"project": null}}
+```
+
+Includes can only load partials supplied with the template. For templates stored in a database, pass the same parts
+as constructor arguments: `partials: [...]`, `assets: ['logo.png' => $bytes]`, `defaults: [...]`.
 
 belegwerk ships no templates; they live in your project. [`examples/invoice-template`](examples/invoice-template)
 is a German invoice layout to copy as a starting point.
@@ -152,7 +164,16 @@ For `document()` the context is the array you pass, merged into the defaults. It
 
 Undefined variables and keys throw a `Twig\Error\RuntimeError` instead of printing nothing, so a typo like
 `{{ seler.name }}` cannot slip onto an invoice. All invoice fields above are always set (`null` if not given).
-Read optional data such as `custom` fields with `default` or `is defined`:
+
+Declare the optional `custom` fields a template reads in its `defaults.json`. They are merged below the data you pass
+(template defaults < `defaults` of `Belegwerk` < call data), so the template works whether or not a field is set:
+
+```json
+{ "custom": { "time_range": null, "section_title": "Leistungen" } }
+```
+
+Template defaults only reach the template. They never change the e-invoice XML, so a user-supplied template cannot
+alter invoice data. Alternatively, read optional data with `default` or `is defined`:
 
 ```twig
 {% if custom.project|default %}Projekt: {{ custom.project }}{% endif %}
@@ -160,8 +181,9 @@ Read optional data such as `custom` fields with `default` or `is defined`:
 {% if not direct_debit %}IBAN {{ bank.iban }}{% endif %}   {# bank may be null with a direct debit #}
 ```
 
-The example template reads these optional `custom` fields: `logo` (data URI), `legal` (list of lines for the footer,
-e.g. commercial register and managing directors), `occasion`, `project`, `orderer`, `section_title`.
+The example template reads these optional `custom` fields, declared in its `defaults.json`: `logo` (data URI),
+`legal` (list of lines for the footer, e.g. commercial register and managing directors), `occasion`, `project`,
+`orderer`, `section_title`.
 
 ### Formatting
 
@@ -179,7 +201,7 @@ Templates run in Twig's sandbox with a strict policy:
 - **Tags:** `if`, `for`, `set`, `include`
 - **Filters:** `escape`/`e`, `raw`, `upper`, `lower`, `capitalize`, `title`, `trim`, `nl2br`, `striptags`, `replace`,
   `format`, `number_format`, `round`, `abs`, `date`, `default`, `length`, `first`, `last`, `join`, `split`, `slice`,
-  `keys`, `merge`, `batch`, `column`, `money`
+  `keys`, `merge`, `batch`, `column`, `money`, `asset`
 - **Tests** such as `is empty`, `is defined`, `is odd`
 - Operators, including `~`, `in`, `??` and arithmetic
 
@@ -188,14 +210,24 @@ Output is HTML-escaped automatically.
 
 ### Fonts and images
 
-Embed them as `data:` URIs, since Gotenberg does not load anything from the network:
+Put them into the template's `assets/` folder (or pass `assets:` to the constructor) and use the `asset` filter. It
+embeds the file as a `data:` URI, since Gotenberg does not load anything from the network. This works in `html`,
+`header` and `footer`, in `<img>` as well as in CSS:
 
 ```html
 <style>
-  @font-face { font-family: Brand; src: url(data:font/woff2;base64,...) format('woff2'); }
+  @font-face { font-family: Brand; src: url({{ 'Brand.woff2'|asset }}) format('woff2'); }
   body { font-family: Brand, Arial, sans-serif; }
 </style>
-<img src="data:image/svg+xml;base64,...">
+<img src="{{ 'logo.png'|asset }}">
+```
+
+Supported types: png, jpg, jpeg, gif, webp, svg, woff2, woff, ttf, otf. Asset names are plain file names without a path;
+an unknown name throws a `Twig\Error\RuntimeError`. Images that change per customer, such as a tenant's logo, can still
+be passed in the data as a data URI, e.g. `custom.logo`:
+
+```html
+{% if custom.logo %}<img src="{{ custom.logo }}">{% endif %}
 ```
 
 ## Errors

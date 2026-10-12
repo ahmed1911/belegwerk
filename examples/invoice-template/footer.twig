@@ -1,4 +1,4 @@
-{% set legal = custom.legal|default([]) -%}
+{% set legal = custom.legal -%}
 {% if seller.vat_id %}{% set legal = legal|merge(['USt-IdNr.: ' ~ seller.vat_id]) %}{% endif -%}
 {% if seller.tax_number %}{% set legal = legal|merge(['Steuernr.: ' ~ seller.tax_number]) %}{% endif -%}
 {% if seller.phone %}{% set legal = legal|merge(['Tel.: ' ~ seller.phone]) %}{% endif -%}

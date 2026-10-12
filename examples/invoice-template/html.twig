@@ -57,7 +57,7 @@
 </head>
 <body>
     <header class="letterhead">
-        {% if custom.logo|default %}
+        {% if custom.logo %}
             <img class="brand-logo" src="{{ custom.logo }}" alt="">
         {% else %}
             <div class="brand-name">{{ seller.name }}</div>
@@ -86,11 +86,11 @@
         {% elseif service_date %}
             <div class="fact fact-stacked"><strong>Rechnung für Zeitraum:</strong><span>{{ service_date|date('d.m.Y') }}</span></div>
         {% endif %}
-        {% if custom.occasion|default %}<div class="fact"><strong>Anlass/Einsatzort:</strong><span>{{ custom.occasion|nl2br }}</span></div>{% endif %}
+        {% if custom.occasion %}<div class="fact"><strong>Anlass/Einsatzort:</strong><span>{{ custom.occasion|nl2br }}</span></div>{% endif %}
         <div class="fact fact-stacked"><strong>Rechnungsnummer:</strong><span>{{ number }}</span></div>
-        {% if custom.project|default %}<div class="fact"><strong>Kostenstelle/Projekt:</strong><span>{{ custom.project }}</span></div>{% endif %}
+        {% if custom.project %}<div class="fact"><strong>Kostenstelle/Projekt:</strong><span>{{ custom.project }}</span></div>{% endif %}
         {% if buyer_reference %}<div class="fact"><strong>Ihre Referenz:</strong><span>{{ buyer_reference }}</span></div>{% endif %}
-        {% if custom.orderer|default %}<div class="fact fact-wide"><strong>Besteller:</strong><span>{{ custom.orderer }}</span></div>{% endif %}
+        {% if custom.orderer %}<div class="fact fact-wide"><strong>Besteller:</strong><span>{{ custom.orderer }}</span></div>{% endif %}
     </section>
 
     {% if note %}<p class="intro">{{ note|nl2br }}</p>{% endif %}
@@ -98,7 +98,7 @@
 
     <table class="items">
         <colgroup><col class="description-col"><col class="quantity-col"><col class="price-col"><col class="total-col"></colgroup>
-        <thead><tr><th>{{ custom.section_title|default('Leistungen') }}</th><th class="num">Anzahl</th><th class="num">Preis</th><th class="num">Gesamt</th></tr></thead>
+        <thead><tr><th>{{ custom.section_title }}</th><th class="num">Anzahl</th><th class="num">Preis</th><th class="num">Gesamt</th></tr></thead>
         <tbody>
             {% for line in lines %}
                 <tr>

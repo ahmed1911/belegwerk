@@ -126,6 +126,121 @@ final class BelegwerkTest extends TestCase
         self::assertSame(['partials/styles.twig'], array_keys($template->partials));
     }
 
+    public function testAssetFilterEmbedsTemplateAssetsAsDataUris(): void
+    {
+        $template = new Template(
+            '<img src="{{ \'logo.svg\'|asset }}">',
+            footer: '<style>@font-face { src: url({{ "Brand.woff2"|asset }}); }</style>',
+            assets: ['logo.svg' => '<svg/>', 'Brand.woff2' => 'font'],
+        );
+
+        $html = $this->echoed()->document($template);
+
+        self::assertStringContainsString('<img src="data:image/svg+xml;base64,' . base64_encode('<svg/>') . '">', $html);
+        self::assertStringContainsString('url(data:font/woff2;base64,' . base64_encode('font') . ')', $html);
+    }
+
+    public function testAssetFilterRejectsUnknownAssets(): void
+    {
+        $this->expectException(RuntimeError::class);
+        $this->expectExceptionMessage('Unknown template asset "../logo.png" (available: logo.svg)');
+        (new Belegwerk('http://127.0.0.1:9'))->document(new Template(
+            '<img src="{{ \'../logo.png\'|asset }}">',
+            assets: ['logo.svg' => '<svg/>'],
+        ));
+    }
+
+    public function testTemplateRejectsAssetPathsAndUnknownTypes(): void
+    {
+        foreach (['../logo.png', 'sub/logo.png', '.hidden.png', 'script.js', 'logo'] as $name) {
+            try {
+                new Template('<p></p>', assets: [$name => 'x']);
+                self::fail("Asset name {$name} was accepted.");
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testTemplateDirectoryLoadsAssetsAndDefaults(): void
+    {
+        $template = Template::fromDirectory(__DIR__ . '/fixtures/template-with-assets');
+
+        self::assertSame(['Brand.woff2', 'logo.svg'], array_keys($template->assets));
+        self::assertSame(['custom' => ['time_range' => null, 'title' => 'Leistungen']], $template->defaults);
+    }
+
+    public function testTemplateDefaultsFillMissingDataButDataWins(): void
+    {
+        $template = new Template(
+            '<p>{{ custom.title }}|{{ custom.time_range }}|{{ custom.note }}</p>',
+            defaults: ['custom' => ['title' => 'Leistungen', 'time_range' => null, 'note' => 'aus Vorlage']],
+        );
+        $belegwerk = $this->echoed(defaults: ['custom' => ['note' => 'aus Konstruktor']]);
+
+        self::assertStringContainsString('<p>Leistungen||aus Konstruktor</p>', $belegwerk->document($template));
+        self::assertStringContainsString(
+            '<p>Angebot|März|aus Konstruktor</p>',
+            $belegwerk->document($template, ['custom' => ['title' => 'Angebot', 'time_range' => 'März']]),
+        );
+    }
+
+    public function testTemplateDefaultsReachTheInvoiceTemplateButNotTheXml(): void
+    {
+        $invoice = InvoiceNormalizerTest::example();
+        unset($invoice['custom']);
+        $template = new Template(
+            '<p>Zeitraum {{ custom.time_range }}</p>',
+            defaults: ['custom' => ['time_range' => 'Q3 2026'], 'order_reference' => 'FROM-TEMPLATE'],
+        );
+
+        $pdf = $this->gotenberg()->invoice($invoice, $template);
+
+        self::assertStringContainsString('Zeitraum Q3 2026', $this->text($pdf));
+        self::assertStringNotContainsString('FROM-TEMPLATE', ZugferdDocumentPdfReader::getXmlFromContent($pdf));
+    }
+
+    public function testTemplateDirectoryRejectsInvalidDefaults(): void
+    {
+        $directory = sys_get_temp_dir() . '/belegwerk-invalid-defaults-' . getmypid();
+        @mkdir($directory);
+        file_put_contents("{$directory}/html.twig", '<p></p>');
+        file_put_contents("{$directory}/defaults.json", '["not", "an object"]');
+
+        try {
+            $this->expectException(\InvalidArgumentException::class);
+            $this->expectExceptionMessage('must contain a JSON object');
+            Template::fromDirectory($directory);
+        } finally {
+            array_map(unlink(...), glob("{$directory}/*"));
+            rmdir($directory);
+        }
+    }
+
+    /**
+     * Belegwerk against a fake Gotenberg that returns the rendered HTML instead of a PDF.
+     */
+    private function echoed(array $defaults = []): Belegwerk
+    {
+        static $url = null;
+        if ($url === null) {
+            $socket = stream_socket_server('tcp://127.0.0.1:0');
+            $port = (int) substr(strrchr(stream_socket_get_name($socket, false), ':'), 1);
+            fclose($socket);
+            $server = proc_open(
+                [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__ . '/fixtures/echo-gotenberg.php'],
+                [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']],
+                $pipes,
+            );
+            register_shutdown_function(static fn () => proc_terminate($server));
+            for ($i = 0; $i < 50 && @fsockopen('127.0.0.1', $port) === false; $i++) {
+                usleep(100_000);
+            }
+            $url = "http://127.0.0.1:{$port}";
+        }
+        return new Belegwerk($url, $defaults);
+    }
+
     private function gotenberg(): Belegwerk
     {
         return new Belegwerk($this->reachable(getenv('GOTENBERG_URL') ?: 'http://127.0.0.1:3000', 'Gotenberg'));
