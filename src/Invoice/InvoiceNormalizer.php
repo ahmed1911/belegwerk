@@ -149,26 +149,24 @@ final class InvoiceNormalizer
     private function calculate(array &$invoice, int $paid): void
     {
         $groups = [];
-        $lineTotal = 0;
+        $addToGroup = static function (string $category, string $rate, int $cents) use (&$groups): void {
+            $groups[$category . '|' . $rate] ??= ['category' => $category, 'rate' => $rate, 'base_cents' => 0];
+            $groups[$category . '|' . $rate]['base_cents'] += $cents;
+        };
         foreach ($invoice['lines'] as $line) {
-            $key = $line['tax_category'] . '|' . $line['tax_rate'];
-            $groups[$key] ??= ['category' => $line['tax_category'], 'rate' => $line['tax_rate'], 'base_cents' => 0];
-            $groups[$key]['base_cents'] += $line['net_cents'];
-            $lineTotal += $line['net_cents'];
+            $addToGroup($line['tax_category'], $line['tax_rate'], $line['net_cents']);
         }
+        $lineTotal = array_sum(array_column($invoice['lines'], 'net_cents'));
 
         // Percentages on the whole invoice refer to the line amounts, not to each other.
         $lineGroups = $groups;
         $adjustmentTotals = [];
         foreach (['allowances' => -1, 'charges' => 1] as $type => $sign) {
             $invoice[$type] = $this->resolveAdjustments($invoice[$type], $type, $lineGroups);
-            $adjustmentTotals[$type] = 0;
             foreach ($invoice[$type] as $adjustment) {
-                $key = $adjustment['tax_category'] . '|' . $adjustment['tax_rate'];
-                $groups[$key] ??= ['category' => $adjustment['tax_category'], 'rate' => $adjustment['tax_rate'], 'base_cents' => 0];
-                $groups[$key]['base_cents'] += $sign * $adjustment['amount_cents'];
-                $adjustmentTotals[$type] += $adjustment['amount_cents'];
+                $addToGroup($adjustment['tax_category'], $adjustment['tax_rate'], $sign * $adjustment['amount_cents']);
             }
+            $adjustmentTotals[$type] = array_sum(array_column($invoice[$type], 'amount_cents'));
         }
         $net = $lineTotal - $adjustmentTotals['allowances'] + $adjustmentTotals['charges'];
 
@@ -219,7 +217,6 @@ final class InvoiceNormalizer
         $resolved = [];
         foreach ($adjustments as $index => $adjustment) {
             $tax = $adjustment['tax'];
-            unset($adjustment['tax']);
             if ($tax !== null) {
                 $targets = [$lineGroups[$tax[0] . '|' . $tax[1]] ?? ['category' => $tax[0], 'rate' => $tax[1], 'base_cents' => null]];
             } elseif ($adjustment['percent'] !== null || count($lineGroups) === 1) {
@@ -260,7 +257,7 @@ final class InvoiceNormalizer
      * Multiplies decimal strings exactly, divides by 10^$shift and rounds half away from zero to an integer,
      * e.g. roundedProduct(0, '0.58', '25') = 15, where float math yields 14.
      */
-    private static function roundedProduct(int $shift, string ...$factors): int
+    public static function roundedProduct(int $shift, string ...$factors): int
     {
         $digits = 1;
         $scale = $shift;
@@ -541,13 +538,10 @@ final class InvoiceNormalizer
             }
 
             $code = $this->optionalString($entry, 'reason_code', $path);
-            $knownCode = $type === 'allowances'
-                ? ctype_digit((string) $code) && ZugferdAllowanceCodes::tryFrom((int) $code) !== null
-                : ZugferdChargeCodes::tryFrom((string) $code) !== null;
-            if ($code !== null && !$knownCode) {
-                $this->errors[$path . 'reason_code'] = $type === 'allowances'
-                    ? 'Unknown allowance reason code (UNTDID 5189, e.g. 95 for a discount).'
-                    : 'Unknown charge reason code (UNTDID 7161, e.g. FC for freight).';
+            if ($code !== null && $type === 'allowances' && (!ctype_digit($code) || ZugferdAllowanceCodes::tryFrom((int) $code) === null)) {
+                $this->errors[$path . 'reason_code'] = 'Unknown allowance reason code (UNTDID 5189, e.g. 95 for a discount).';
+            } elseif ($code !== null && $type === 'charges' && ZugferdChargeCodes::tryFrom($code) === null) {
+                $this->errors[$path . 'reason_code'] = 'Unknown charge reason code (UNTDID 7161, e.g. FC for freight).';
             }
 
             $adjustment = [

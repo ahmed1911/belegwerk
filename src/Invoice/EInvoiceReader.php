@@ -30,11 +30,33 @@ final class EInvoiceReader
         'cbc' => 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2',
     ];
 
+    /** Paths of an allowance or charge (BG-20/21, BG-27/28), relative to its element. */
+    private const CII_ADJUSTMENT = [
+        'indicator' => 'ram:ChargeIndicator/udt:Indicator',
+        'reason' => 'ram:Reason',
+        'reason_code' => 'ram:ReasonCode',
+        'percent' => 'ram:CalculationPercent',
+        'base' => 'ram:BasisAmount',
+        'amount' => 'ram:ActualAmount',
+        'tax_category' => 'ram:CategoryTradeTax/ram:CategoryCode',
+        'tax_rate' => 'ram:CategoryTradeTax/ram:RateApplicablePercent',
+    ];
+    private const UBL_ADJUSTMENT = [
+        'indicator' => 'cbc:ChargeIndicator',
+        'reason' => 'cbc:AllowanceChargeReason',
+        'reason_code' => 'cbc:AllowanceChargeReasonCode',
+        'percent' => 'cbc:MultiplierFactorNumeric',
+        'base' => 'cbc:BaseAmount',
+        'amount' => 'cbc:Amount',
+        'tax_category' => 'cac:TaxCategory/cbc:ID',
+        'tax_rate' => 'cac:TaxCategory/cbc:Percent',
+    ];
+
     private DOMXPath $xpath;
 
     public function read(string $content): array
     {
-        if (str_starts_with(ltrim($content), '%PDF')) {
+        if (str_starts_with(ltrim(substr($content, 0, 1024)), '%PDF')) {
             try {
                 $content = ZugferdDocumentPdfReader::getXmlFromContent($content);
             } catch (Throwable $error) {
@@ -44,7 +66,7 @@ final class EInvoiceReader
 
         $document = new DOMDocument();
         // No network access and no entity substitution, the content comes from outside.
-        if (trim($content) === '' || !@$document->loadXML($content, LIBXML_NONET)) {
+        if ($content === '' || !@$document->loadXML($content, LIBXML_NONET)) {
             throw new ReadException('Not a PDF and not well-formed XML.');
         }
         $this->xpath = new DOMXPath($document);
@@ -87,21 +109,21 @@ final class EInvoiceReader
                 $this->text('ram:SpecifiedLineTradeSettlement/ram:SpecifiedTradeSettlementLineMonetarySummation/ram:LineTotalAmount', $item),
                 $this->text('ram:CategoryCode', $tax),
                 $this->text('ram:RateApplicablePercent', $tax),
-                $this->ciiAdjustments($this->nodes('ram:SpecifiedLineTradeSettlement/ram:SpecifiedTradeAllowanceCharge', $item), false),
+                $this->adjustments($this->nodes('ram:SpecifiedLineTradeSettlement/ram:SpecifiedTradeAllowanceCharge', $item), self::CII_ADJUSTMENT),
             );
         }
 
         $taxGroups = [];
         foreach ($this->nodes('ram:ApplicableTradeTax', $settlement) as $tax) {
-            $taxGroups[] = [
-                'category' => $this->text('ram:CategoryCode', $tax),
-                'rate' => self::decimal($this->text('ram:RateApplicablePercent', $tax)),
-                'base_cents' => self::cents($this->text('ram:BasisAmount', $tax)),
-                'amount_cents' => self::cents($this->text('ram:CalculatedAmount', $tax)),
-                'exemption_reason' => $this->text('ram:ExemptionReason', $tax),
-            ];
+            $taxGroups[] = $this->taxGroup(
+                $this->text('ram:CategoryCode', $tax),
+                $this->text('ram:RateApplicablePercent', $tax),
+                $this->text('ram:BasisAmount', $tax),
+                $this->text('ram:CalculatedAmount', $tax),
+                $this->text('ram:ExemptionReason', $tax),
+            );
         }
-        $adjustments = $this->ciiAdjustments($this->nodes('ram:SpecifiedTradeAllowanceCharge', $settlement), true);
+        $adjustments = $this->adjustments($this->nodes('ram:SpecifiedTradeAllowanceCharge', $settlement), self::CII_ADJUSTMENT, true);
 
         return $this->invoice([
             'syntax' => 'CII',
@@ -122,8 +144,8 @@ final class EInvoiceReader
                 $this->text('ram:InvoiceReferencedDocument/ram:IssuerAssignedID', $settlement),
                 $this->ciiDate('ram:InvoiceReferencedDocument/ram:FormattedIssueDateTime/qdt:DateTimeString', $settlement),
             ),
-            'payment_terms' => $this->text('ram:Description', $terms),
-            'cash_discount' => $this->cashDiscount($this->text('ram:Description', $terms)),
+            'payment_terms' => $paymentTerms = $this->text('ram:Description', $terms),
+            'cash_discount' => self::cashDiscount($paymentTerms),
             'note' => $this->joined('ram:IncludedNote/ram:Content', $header),
             'seller' => $seller,
             'buyer' => $this->ciiParty($this->node('ram:BuyerTradeParty', $agreement)),
@@ -178,27 +200,6 @@ final class EInvoiceReader
         );
     }
 
-    /** @return array{allowances: list<array>, charges: list<array>} */
-    private function ciiAdjustments(array $nodes, bool $withTax): array
-    {
-        $result = ['allowances' => [], 'charges' => []];
-        foreach ($nodes as $node) {
-            $adjustment = $this->adjustment(
-                $this->text('ram:Reason', $node),
-                $this->text('ram:ReasonCode', $node),
-                $this->text('ram:CalculationPercent', $node),
-                $this->text('ram:BasisAmount', $node),
-                $this->text('ram:ActualAmount', $node),
-            );
-            if ($withTax) {
-                $adjustment['tax_category'] = $this->text('ram:CategoryTradeTax/ram:CategoryCode', $node);
-                $adjustment['tax_rate'] = self::decimal($this->text('ram:CategoryTradeTax/ram:RateApplicablePercent', $node));
-            }
-            $result[$this->text('ram:ChargeIndicator/udt:Indicator', $node) === 'true' ? 'charges' : 'allowances'][] = $adjustment;
-        }
-        return $result;
-    }
-
     /** CII dates are mostly in format 102 (YYYYMMDD). */
     private function ciiDate(string $path, ?DOMNode $context): ?string
     {
@@ -228,21 +229,21 @@ final class EInvoiceReader
                 $this->text('cbc:LineExtensionAmount', $item),
                 $this->text('cbc:ID', $tax),
                 $this->text('cbc:Percent', $tax),
-                $this->ublAdjustments($this->nodes('cac:AllowanceCharge', $item), false),
+                $this->adjustments($this->nodes('cac:AllowanceCharge', $item), self::UBL_ADJUSTMENT),
             );
         }
 
         $taxGroups = [];
         foreach ($this->nodes("cac:TaxTotal[cbc:TaxAmount/@currencyID='{$currency}']/cac:TaxSubtotal", $root) as $tax) {
-            $taxGroups[] = [
-                'category' => $this->text('cac:TaxCategory/cbc:ID', $tax),
-                'rate' => self::decimal($this->text('cac:TaxCategory/cbc:Percent', $tax)),
-                'base_cents' => self::cents($this->text('cbc:TaxableAmount', $tax)),
-                'amount_cents' => self::cents($this->text('cbc:TaxAmount', $tax)),
-                'exemption_reason' => $this->text('cac:TaxCategory/cbc:TaxExemptionReason', $tax),
-            ];
+            $taxGroups[] = $this->taxGroup(
+                $this->text('cac:TaxCategory/cbc:ID', $tax),
+                $this->text('cac:TaxCategory/cbc:Percent', $tax),
+                $this->text('cbc:TaxableAmount', $tax),
+                $this->text('cbc:TaxAmount', $tax),
+                $this->text('cac:TaxCategory/cbc:TaxExemptionReason', $tax),
+            );
         }
-        $adjustments = $this->ublAdjustments($this->nodes('cac:AllowanceCharge', $root), true);
+        $adjustments = $this->adjustments($this->nodes('cac:AllowanceCharge', $root), self::UBL_ADJUSTMENT, true);
 
         return $this->invoice([
             'syntax' => 'UBL',
@@ -263,8 +264,8 @@ final class EInvoiceReader
                 $this->text('cac:BillingReference/cac:InvoiceDocumentReference/cbc:ID', $root),
                 $this->text('cac:BillingReference/cac:InvoiceDocumentReference/cbc:IssueDate', $root),
             ),
-            'payment_terms' => $this->text('cac:PaymentTerms/cbc:Note', $root),
-            'cash_discount' => $this->cashDiscount($this->text('cac:PaymentTerms/cbc:Note', $root)),
+            'payment_terms' => $paymentTerms = $this->text('cac:PaymentTerms/cbc:Note', $root),
+            'cash_discount' => self::cashDiscount($paymentTerms),
             'note' => $this->joined('cbc:Note', $root),
             'seller' => $seller,
             'buyer' => $this->ublParty($this->node('cac:AccountingCustomerParty/cac:Party', $root)),
@@ -316,27 +317,6 @@ final class EInvoiceReader
             $this->text('cbc:Name', $contact),
             $this->node('cbc:EndpointID', $party),
         );
-    }
-
-    /** @return array{allowances: list<array>, charges: list<array>} */
-    private function ublAdjustments(array $nodes, bool $withTax): array
-    {
-        $result = ['allowances' => [], 'charges' => []];
-        foreach ($nodes as $node) {
-            $adjustment = $this->adjustment(
-                $this->text('cbc:AllowanceChargeReason', $node),
-                $this->text('cbc:AllowanceChargeReasonCode', $node),
-                $this->text('cbc:MultiplierFactorNumeric', $node),
-                $this->text('cbc:BaseAmount', $node),
-                $this->text('cbc:Amount', $node),
-            );
-            if ($withTax) {
-                $adjustment['tax_category'] = $this->text('cac:TaxCategory/cbc:ID', $node);
-                $adjustment['tax_rate'] = self::decimal($this->text('cac:TaxCategory/cbc:Percent', $node));
-            }
-            $result[$this->text('cbc:ChargeIndicator', $node) === 'true' ? 'charges' : 'allowances'][] = $adjustment;
-        }
-        return $result;
     }
 
     private function invoice(array $invoice): array
@@ -408,14 +388,38 @@ final class EInvoiceReader
         ];
     }
 
-    private function adjustment(?string $reason, ?string $code, ?string $percent, ?string $base, ?string $amount): array
+    /**
+     * @param array<string, string> $paths  CII_ADJUSTMENT or UBL_ADJUSTMENT
+     * @return array{allowances: list<array>, charges: list<array>}
+     */
+    private function adjustments(array $nodes, array $paths, bool $withTax = false): array
+    {
+        $result = ['allowances' => [], 'charges' => []];
+        foreach ($nodes as $node) {
+            $adjustment = [
+                'reason' => $this->text($paths['reason'], $node),
+                'reason_code' => $this->text($paths['reason_code'], $node),
+                'percent' => self::decimal($this->text($paths['percent'], $node)),
+                'base_cents' => self::cents($this->text($paths['base'], $node)),
+                'amount_cents' => self::cents($this->text($paths['amount'], $node)),
+            ];
+            if ($withTax) {
+                $adjustment['tax_category'] = $this->text($paths['tax_category'], $node);
+                $adjustment['tax_rate'] = self::decimal($this->text($paths['tax_rate'], $node));
+            }
+            $result[$this->text($paths['indicator'], $node) === 'true' ? 'charges' : 'allowances'][] = $adjustment;
+        }
+        return $result;
+    }
+
+    private function taxGroup(?string $category, ?string $rate, ?string $base, ?string $amount, ?string $exemptionReason): array
     {
         return [
-            'reason' => $reason,
-            'reason_code' => $code,
-            'percent' => self::decimal($percent),
+            'category' => $category,
+            'rate' => self::decimal($rate),
             'base_cents' => self::cents($base),
             'amount_cents' => self::cents($amount),
+            'exemption_reason' => $exemptionReason,
         ];
     }
 
@@ -437,7 +441,7 @@ final class EInvoiceReader
     }
 
     /** The first cash discount in the XRechnung notation #SKONTO#TAGE=14#PROZENT=2.00#. */
-    private function cashDiscount(?string $paymentTerms): ?array
+    private static function cashDiscount(?string $paymentTerms): ?array
     {
         if ($paymentTerms === null || !preg_match('/#SKONTO#TAGE=(\d+)#PROZENT=(\d+(?:\.\d+)?)#/', $paymentTerms, $match)) {
             return null;
@@ -493,11 +497,9 @@ final class EInvoiceReader
         if ($amount === null || !is_numeric($amount)) {
             return null;
         }
-        $decimal = self::decimal($amount);
+        $decimal = (string) self::decimal($amount);
         if (InvoiceNormalizer::decimalPlaces($decimal) <= 2) {
-            [$whole, $fraction] = explode('.', $decimal . '.');
-            $cents = abs((int) $whole) * 100 + (int) str_pad($fraction, 2, '0');
-            return str_starts_with($decimal, '-') ? -$cents : $cents;
+            return InvoiceNormalizer::roundedProduct(0, $decimal, '100');
         }
         return (float) $amount * 100;
     }

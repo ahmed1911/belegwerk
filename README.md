@@ -146,7 +146,7 @@ echo $invoice['seller']['name'], ': ', $invoice['totals']['due_cents'] / 100, ' 
 and PDFs with one of them embedded. It returns the amounts the invoice states and recalculates nothing. Validate
 incoming invoices with the KoSIT validator (see [Validating e-invoices](#validating-e-invoices)) if you need to.
 
-The result has the keys of the [template context](#context), with `null` for anything the invoice does not contain:
+The result uses the keys of the [template context](#context) (it is not a complete context), with `null` for anything the invoice does not contain:
 `number`, `type_code`, `currency`, `date`, `due_date`, `service_date`, `period`, `buyer_reference`, `order_reference`,
 `preceding_invoice`, `payment_terms`, `cash_discount` (`days`, `percent` from `#SKONTO#`), `note`, `seller`, `buyer`
 (each with `tax_number` and `phone`), `bank` (`name` is always `null`), `direct_debit`, `lines[]`, `allowances[]`,

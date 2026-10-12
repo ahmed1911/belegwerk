@@ -117,7 +117,6 @@ final class EInvoiceBuilder
                     $adjustment['tax_category'],
                     'VAT',
                     (float) $adjustment['tax_rate'],
-                    null,
                     ...self::adjustmentDetails($adjustment),
                 );
             }
@@ -162,24 +161,25 @@ final class EInvoiceBuilder
                 ->setDocumentPositionLineSummation($amount($line['net_cents']));
             foreach (['allowances' => false, 'charges' => true] as $type => $isCharge) {
                 foreach ($line[$type] as $adjustment) {
-                    [$percent, $basis, , , $reasonCode, $reason] = self::adjustmentDetails($adjustment);
-                    $document->addDocumentPositionAllowanceCharge($amount($adjustment['amount_cents']), $isCharge, $percent, $basis, $reasonCode, $reason);
+                    $document->addDocumentPositionAllowanceCharge(
+                        $amount($adjustment['amount_cents']),
+                        $isCharge,
+                        ...self::adjustmentDetails($adjustment),
+                    );
                 }
             }
         }
         return $document;
     }
 
-    /** Percentage, base amount, base quantity and its unit, reason code and reason of an allowance or charge. */
+    /** Named arguments shared by horstoeko's allowance and charge setters for the invoice and for a line. */
     private static function adjustmentDetails(array $adjustment): array
     {
         return [
-            $adjustment['percent'] !== null ? (float) $adjustment['percent'] : null,
-            $adjustment['base_cents'] !== null ? $adjustment['base_cents'] / 100 : null,
-            null,
-            null,
-            $adjustment['reason_code'],
-            $adjustment['reason'],
+            'calculationPercent' => $adjustment['percent'] !== null ? (float) $adjustment['percent'] : null,
+            'basisAmount' => $adjustment['base_cents'] !== null ? $adjustment['base_cents'] / 100 : null,
+            'reasonCode' => $adjustment['reason_code'],
+            'reason' => $adjustment['reason'],
         ];
     }
 
