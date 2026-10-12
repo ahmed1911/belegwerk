@@ -54,6 +54,9 @@ final class Template
                 throw new InvalidArgumentException("Template asset \"{$name}\" must be a file name without a path, with one of the extensions {$types}.");
             }
         }
+        if ($defaults !== [] && array_is_list($defaults)) {
+            throw new InvalidArgumentException('Template defaults must be an object (string keys), not a list.');
+        }
     }
 
     /**
@@ -83,7 +86,7 @@ final class Template
             } catch (JsonException $e) {
                 throw new InvalidArgumentException("Invalid defaults.json in {$directory}: {$e->getMessage()}", 0, $e);
             }
-            if (!is_array($defaults) || array_is_list($defaults) && $defaults !== []) {
+            if (!is_array($defaults)) {
                 throw new InvalidArgumentException("defaults.json in {$directory} must contain a JSON object.");
             }
         }

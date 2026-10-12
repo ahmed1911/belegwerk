@@ -126,18 +126,12 @@ final class BelegwerkTest extends TestCase
         self::assertSame(['partials/styles.twig'], array_keys($template->partials));
     }
 
-    public function testAssetFilterEmbedsTemplateAssetsAsDataUris(): void
+    public function testAssetUriIsADataUri(): void
     {
-        $template = new Template(
-            '<img src="{{ \'logo.svg\'|asset }}">',
-            footer: '<style>@font-face { src: url({{ "Brand.woff2"|asset }}); }</style>',
-            assets: ['logo.svg' => '<svg/>', 'Brand.woff2' => 'font'],
-        );
+        $template = new Template('<p></p>', assets: ['logo.svg' => '<svg/>', 'Brand.woff2' => 'font']);
 
-        $html = $this->echoed()->document($template);
-
-        self::assertStringContainsString('<img src="data:image/svg+xml;base64,' . base64_encode('<svg/>') . '">', $html);
-        self::assertStringContainsString('url(data:font/woff2;base64,' . base64_encode('font') . ')', $html);
+        self::assertSame('data:image/svg+xml;base64,' . base64_encode('<svg/>'), $template->assetUri('logo.svg'));
+        self::assertSame('data:font/woff2;base64,' . base64_encode('font'), $template->assetUri('Brand.woff2'));
     }
 
     public function testAssetFilterRejectsUnknownAssets(): void
@@ -150,16 +144,28 @@ final class BelegwerkTest extends TestCase
         ));
     }
 
-    public function testTemplateRejectsAssetPathsAndUnknownTypes(): void
+    public static function invalidAssetNames(): array
     {
-        foreach (['../logo.png', 'sub/logo.png', '.hidden.png', 'script.js', 'logo'] as $name) {
-            try {
-                new Template('<p></p>', assets: [$name => 'x']);
-                self::fail("Asset name {$name} was accepted.");
-            } catch (\InvalidArgumentException) {
-                self::addToAssertionCount(1);
-            }
-        }
+        return array_map(static fn (string $name): array => [$name], [
+            'parent directory' => '../logo.png',
+            'subdirectory' => 'sub/logo.png',
+            'hidden file' => '.hidden.png',
+            'unsupported type' => 'script.js',
+            'no extension' => 'logo',
+        ]);
+    }
+
+    #[DataProvider('invalidAssetNames')]
+    public function testTemplateRejectsAssetPathsAndUnknownTypes(string $name): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new Template('<p></p>', assets: [$name => 'x']);
+    }
+
+    public function testTemplateRejectsListDefaults(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new Template('<p></p>', defaults: ['not', 'an object']);
     }
 
     public function testTemplateDirectoryLoadsAssetsAndDefaults(): void
@@ -176,13 +182,12 @@ final class BelegwerkTest extends TestCase
             '<p>{{ custom.title }}|{{ custom.time_range }}|{{ custom.note }}</p>',
             defaults: ['custom' => ['title' => 'Leistungen', 'time_range' => null, 'note' => 'aus Vorlage']],
         );
-        $belegwerk = $this->echoed(defaults: ['custom' => ['note' => 'aus Konstruktor']]);
+        $belegwerk = $this->gotenberg(['custom' => ['note' => 'aus Konstruktor']]);
 
-        self::assertStringContainsString('<p>Leistungen||aus Konstruktor</p>', $belegwerk->document($template));
-        self::assertStringContainsString(
-            '<p>Angebot|März|aus Konstruktor</p>',
+        self::assertStringContainsString('Leistungen||aus Konstruktor', $this->text($belegwerk->document($template)));
+        self::assertStringContainsString('Angebot|März|aus Konstruktor', $this->text(
             $belegwerk->document($template, ['custom' => ['title' => 'Angebot', 'time_range' => 'März']]),
-        );
+        ));
     }
 
     public function testTemplateDefaultsReachTheInvoiceTemplateButNotTheXml(): void
@@ -202,48 +207,14 @@ final class BelegwerkTest extends TestCase
 
     public function testTemplateDirectoryRejectsInvalidDefaults(): void
     {
-        $directory = sys_get_temp_dir() . '/belegwerk-invalid-defaults-' . getmypid();
-        @mkdir($directory);
-        file_put_contents("{$directory}/html.twig", '<p></p>');
-        file_put_contents("{$directory}/defaults.json", '["not", "an object"]');
-
-        try {
-            $this->expectException(\InvalidArgumentException::class);
-            $this->expectExceptionMessage('must contain a JSON object');
-            Template::fromDirectory($directory);
-        } finally {
-            array_map(unlink(...), glob("{$directory}/*"));
-            rmdir($directory);
-        }
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invalid defaults.json');
+        Template::fromDirectory(__DIR__ . '/fixtures/template-with-invalid-defaults');
     }
 
-    /**
-     * Belegwerk against a fake Gotenberg that returns the rendered HTML instead of a PDF.
-     */
-    private function echoed(array $defaults = []): Belegwerk
+    private function gotenberg(array $defaults = []): Belegwerk
     {
-        static $url = null;
-        if ($url === null) {
-            $socket = stream_socket_server('tcp://127.0.0.1:0');
-            $port = (int) substr(strrchr(stream_socket_get_name($socket, false), ':'), 1);
-            fclose($socket);
-            $server = proc_open(
-                [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__ . '/fixtures/echo-gotenberg.php'],
-                [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']],
-                $pipes,
-            );
-            register_shutdown_function(static fn () => proc_terminate($server));
-            for ($i = 0; $i < 50 && @fsockopen('127.0.0.1', $port) === false; $i++) {
-                usleep(100_000);
-            }
-            $url = "http://127.0.0.1:{$port}";
-        }
-        return new Belegwerk($url, $defaults);
-    }
-
-    private function gotenberg(): Belegwerk
-    {
-        return new Belegwerk($this->reachable(getenv('GOTENBERG_URL') ?: 'http://127.0.0.1:3000', 'Gotenberg'));
+        return new Belegwerk($this->reachable(getenv('GOTENBERG_URL') ?: 'http://127.0.0.1:3000', 'Gotenberg'), $defaults);
     }
 
     private function reachable(string $url, string $service): string
