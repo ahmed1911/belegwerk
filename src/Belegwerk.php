@@ -141,11 +141,18 @@ final class Belegwerk
 
     /**
      * The template's own defaults only reach the template context. They never change the invoice XML, because
-     * templates may come from untrusted users.
+     * templates may come from untrusted users. Their `line` key applies to each entry of `lines`.
      */
     private function render(Template $template, array $context): string
     {
-        $context = array_replace_recursive($template->defaults, $context);
+        $lineDefaults = $template->defaults['line'] ?? [];
+        $context = array_replace_recursive(array_diff_key($template->defaults, ['line' => true]), $context);
+        if (is_array($lineDefaults) && is_array($context['lines'] ?? null)) {
+            $context['lines'] = array_map(
+                static fn (mixed $line): mixed => is_array($line) ? array_replace_recursive($lineDefaults, $line) : $line,
+                $context['lines'],
+            );
+        }
         $sources = array_filter([
             'index.html' => $template->html,
             'header.html' => $template->header,

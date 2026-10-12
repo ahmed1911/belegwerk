@@ -190,6 +190,33 @@ final class BelegwerkTest extends TestCase
         ));
     }
 
+    public function testTemplateLineDefaultsApplyToEachLine(): void
+    {
+        $invoice = InvoiceNormalizerTest::example();
+        $invoice['items'][0]['custom'] = ['time_range' => '01.09. bis 05.09.'];
+        $template = new Template(
+            '{% for line in lines %}<p>Position {{ line.id }}: [{{ line.custom.time_range }}]</p>{% endfor %}',
+            defaults: ['line' => ['custom' => ['time_range' => 'ohne Zeitraum']]],
+        );
+
+        $text = $this->text($this->gotenberg()->invoice($invoice, $template));
+
+        self::assertStringContainsString('Position 1: [01.09. bis 05.09.]', $text);
+        self::assertStringContainsString('Position 2: [ohne Zeitraum]', $text);
+    }
+
+    public function testTemplateLineDefaultsPreventMissingKeyErrors(): void
+    {
+        $template = new Template(
+            '{% for line in lines %}{{ line.custom.time_range }}{% endfor %}',
+            defaults: ['line' => ['custom' => ['time_range' => null]]],
+        );
+
+        $this->expectException(GotenbergException::class);
+        $this->expectExceptionMessage('Gotenberg is not reachable');
+        (new Belegwerk('http://127.0.0.1:9'))->document($template, ['lines' => [['custom' => []], ['custom' => ['time_range' => 'Q3']]]]);
+    }
+
     public function testTemplateDefaultsReachTheInvoiceTemplateButNotTheXml(): void
     {
         $invoice = InvoiceNormalizerTest::example();

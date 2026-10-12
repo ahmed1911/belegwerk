@@ -172,6 +172,12 @@ Declare the optional `custom` fields a template reads in its `defaults.json`. Th
 { "custom": { "time_range": null, "section_title": "Leistungen" } }
 ```
 
+Defaults under `line` apply to each entry of `lines`, for optional per-line fields:
+
+```json
+{ "custom": { "time_range": null }, "line": { "custom": { "time_range": null } } }
+```
+
 Template defaults only reach the template. They never change the e-invoice XML, so a user-supplied template cannot
 alter invoice data. Alternatively, read optional data with `default` or `is defined`:
 
