@@ -1,5 +1,7 @@
 # belegwerk
 
+[![CI](https://github.com/ahmed1911/belegwerk/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmed1911/belegwerk/actions/workflows/ci.yml)
+
 PHP library that renders PDF documents from Twig templates via [Gotenberg](https://gotenberg.dev) and creates
 e-invoices for Germany and the EU:
 
@@ -337,9 +339,10 @@ Payment by card or cash, currencies other than EUR, VAT category `O`, writing UB
 
 ## Tested with
 
-- XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note, a negative
-  line and allowances and charges: accepted by the official KoSIT validator with the XRechnung 3.0.2 configuration (EN 16931 CII rules 1.3.16,
-  part of the test suite)
+- XRechnung XML for a standard invoice, allowances and charges, a deliver-to address with attachments, a small
+  business (§ 19 UStG), reverse charge, a credit note, a corrected invoice, a negative line, a cash discount, a direct
+  debit and partially and fully paid invoices: accepted by the official KoSIT validator with the XRechnung 3.0.2
+  configuration (EN 16931 CII rules 1.3.16, part of the test suite)
 - ZUGFeRD PDFs from `invoice()`: PDF/A-3b valid according to veraPDF (part of the test suite), embedded XML checked
   against the XSD schema on every call
 
@@ -355,6 +358,9 @@ The `schematron` test group validates XRechnung output with the KoSIT validator 
 It needs Java and downloads the validator and its XRechnung configuration from GitHub once (cached in the system temp
 directory). With `KOSIT_URL` set, the tests use a running KoSIT daemon instead, as CI does. Skip it with
 `vendor/bin/phpunit --exclude-group schematron`.
+
+CI (GitHub Actions) runs the unit tests on PHP 8.2 to 8.5 (8.2 also with the lowest dependency versions) and the
+complete suite with Gotenberg, veraPDF and a KoSIT daemon, where no test may be skipped.
 
 ## License
 
