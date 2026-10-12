@@ -53,6 +53,17 @@ final class BelegwerkTest extends TestCase
         self::assertStringContainsString('<ram:ID>urn:cen.eu:en16931:2017</ram:ID>', $xml);
     }
 
+    public function testReadsTheInvoiceFromTheZugferdPdf(): void
+    {
+        $pdf = $this->gotenberg()->invoice(InvoiceNormalizerTest::example(), Template::fromDirectory(self::EXAMPLE_TEMPLATE));
+
+        $invoice = $this->gotenberg()->read($pdf);
+
+        self::assertSame('RE-2026-0042', $invoice['number']);
+        self::assertSame('urn:cen.eu:en16931:2017', $invoice['profile']);
+        self::assertSame(106237, $invoice['totals']['due_cents']);
+    }
+
     public function testInvoiceIsPdfA3bCompliant(): void
     {
         $url = $this->reachable(getenv('VERAPDF_URL') ?: 'http://127.0.0.1:3001', 'veraPDF');

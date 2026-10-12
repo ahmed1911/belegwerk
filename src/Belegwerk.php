@@ -6,6 +6,7 @@ namespace Belegwerk;
 
 use Belegwerk\Gotenberg\GotenbergClient;
 use Belegwerk\Invoice\EInvoiceBuilder;
+use Belegwerk\Invoice\EInvoiceReader;
 use Belegwerk\Invoice\InvoiceNormalizer;
 use Belegwerk\Invoice\PaymentQrCode;
 use horstoeko\zugferd\ZugferdDocumentPdfMerger;
@@ -140,6 +141,17 @@ final class Belegwerk
         $invoice = $this->normalized($invoice);
         $this->normalizer->assertXRechnung($invoice);
         return $this->builder->toXml($invoice, ZugferdProfiles::PROFILE_XRECHNUNG_3);
+    }
+
+    /**
+     * Reads an incoming e-invoice: XRechnung or ZUGFeRD/Factur-X, as CII or UBL XML or as a PDF with embedded XML.
+     * Returns the invoice with the amounts it states, in the keys of the template context; see the README.
+     *
+     * @throws Invoice\ReadException if the content is no e-invoice
+     */
+    public function read(string $content): array
+    {
+        return (new EInvoiceReader())->read($content);
     }
 
     /**

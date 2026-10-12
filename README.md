@@ -5,6 +5,7 @@ e-invoices for Germany and the EU:
 
 - **XRechnung 3.0** (UN/CEFACT CII syntax)
 - **ZUGFeRD / Factur-X**: a PDF/A-3b with the invoice XML embedded (profile EN 16931)
+- **reading incoming e-invoices**: XRechnung and ZUGFeRD/Factur-X as CII or UBL XML, or as PDF
 - **invoice PDFs** and **any other document** (quotes, delivery notes, reminders) from your own templates
 
 It is built for developers of invoicing software whose users design their own templates: templates run in Twig's
@@ -75,7 +76,7 @@ $pdf = $belegwerk->invoice($invoice, new Template($html, footer: $footerHtml));
 $pdf = $belegwerk->document(Template::fromDirectory('/path/to/quote'), ['number' => 'A-7', 'items' => $items]);
 ```
 
-All methods return the file content as a string.
+All methods except `read()` return the file content as a string.
 
 ## Invoice data
 
@@ -133,6 +134,26 @@ result), and an amount takes the VAT rate of the lines if they all have the same
 
 **VAT categories:** `S` (standard, rate > 0), `Z` (zero rated), `E` (exempt), `AE` (reverse charge),
 `K` (intra-community supply), `G` (export). All but `S` require `tax_rate: 0`.
+
+## Reading incoming e-invoices
+
+```php
+$invoice = $belegwerk->read(file_get_contents('eingang.pdf'));   // or the XML of an XRechnung
+echo $invoice['seller']['name'], ': ', $invoice['totals']['due_cents'] / 100, ' € bis ', $invoice['due_date'];
+```
+
+`read()` accepts XRechnung and ZUGFeRD/Factur-X in CII syntax, XRechnung in UBL syntax (`Invoice` and `CreditNote`),
+and PDFs with one of them embedded. It returns the amounts the invoice states and recalculates nothing. Validate
+incoming invoices with the KoSIT validator (see [Validating e-invoices](#validating-e-invoices)) if you need to.
+
+The result has the keys of the [template context](#context), with `null` for anything the invoice does not contain:
+`number`, `type_code`, `currency`, `date`, `due_date`, `service_date`, `period`, `buyer_reference`, `order_reference`,
+`preceding_invoice`, `payment_terms`, `cash_discount` (`days`, `percent` from `#SKONTO#`), `note`, `seller`, `buyer`
+(each with `tax_number` and `phone`), `bank` (`name` is always `null`), `direct_debit`, `lines[]`, `allowances[]`,
+`charges[]`, `tax_groups[]` and `totals`. Additionally `syntax` (`CII` or `UBL`) and `profile` (the specification
+identifier, BT-24). Lines have no `unit` label and no `subtotal_cents`; `unit_price_cents` is a float if the price has
+more than two decimals, and a price per base quantity (e.g. per 100 pieces) is converted to the price per unit.
+Currencies other than EUR are read as they are.
 
 ## Templates
 
@@ -260,6 +281,7 @@ be passed in the data as a data URI, e.g. `custom.logo`:
 | `Belegwerk\Invoice\ValidationException` | Invalid invoice data. `$e->errors` maps field paths such as `items.0.unit_price_cents` to messages. |
 | `Twig\Error\Error` | Template syntax error, undefined variable (`RuntimeError`) or sandbox violation (`SecurityError`). `$e->getTemplateLine()` gives the line. |
 | `Belegwerk\Gotenberg\GotenbergException` | Gotenberg is unreachable or cannot render the document. |
+| `Belegwerk\Invoice\ReadException` | `read()` got no e-invoice: neither a CII or UBL invoice nor a PDF with one embedded. |
 
 Tip: render a preview when a user saves a template, so errors show up there and not during invoicing.
 
@@ -279,8 +301,7 @@ horstoeko's `ZugferdKositValidator`, which also supports a remote KoSIT daemon.
 
 ## Not supported (yet)
 
-Payment by card or cash, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
-e-invoices.
+Payment by card or cash, currencies other than EUR, VAT category `O`, writing UBL syntax.
 
 ## Tested with
 
