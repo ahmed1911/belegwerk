@@ -8,6 +8,7 @@
         "php": ">=8.2",
         "ext-curl": "*",
         "horstoeko/zugferd": "^1.0",
+        "symfony/validator": "^6.4 || ^7.0 || ^8.0",
         "twig/twig": "^3.29"
     },
     "require-dev": {

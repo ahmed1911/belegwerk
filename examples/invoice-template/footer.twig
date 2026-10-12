@@ -27,10 +27,12 @@
                 {%- if seller.address.country != 'DE' %}, {{ seller.address.country }}{% endif %}
             </div>
             <div class="col"><b>Firmendaten</b><br>{{ legal|join(' · ') }}</div>
+            {% if bank %}
             <div class="col">
                 <b>Bankverbindung</b><br>{{ bank.name|default(bank.holder) }}<br>IBAN {{ bank.iban|split('', 4)|join(' ') }}
                 {%- if bank.bic %}<br>BIC {{ bank.bic }}{% endif %}
             </div>
+            {% endif %}
         </div>
     </div>
 </body>

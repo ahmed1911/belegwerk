@@ -1,0 +1,7 @@
+# Kept out of the Composer package: templates live in the projects that use belegwerk.
+/examples export-ignore
+/tests export-ignore
+/compose.yaml export-ignore
+/phpunit.xml.dist export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore

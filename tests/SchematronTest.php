@@ -5,58 +5,21 @@ declare(strict_types=1);
 namespace Belegwerk\Tests;
 
 use Belegwerk\Belegwerk;
-use DOMDocument;
-use DOMXPath;
+use horstoeko\zugferd\ZugferdKositValidator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
-use ZipArchive;
 
 /**
- * Validates generated XRechnung XML with the official Schematron rules (EN 16931 CII and XRechnung),
- * compiled to XSLT and shipped by phive-rules on Maven Central. Needs Java; the jars are cached in the
- * system temp directory. Run without it: phpunit --exclude-group schematron
+ * Validates generated XRechnung XML with the official KoSIT validator (XSD, EN 16931 and XRechnung Schematron).
+ * Needs Java; validator and rules are downloaded once and cached in the system temp directory.
+ * Run without it: phpunit --exclude-group schematron
  */
 #[Group('schematron')]
 final class SchematronTest extends TestCase
 {
-    private const JARS = [
-        'saxon.jar' => 'net/sf/saxon/Saxon-HE/12.5/Saxon-HE-12.5.jar',
-        'xmlresolver.jar' => 'org/xmlresolver/xmlresolver/5.2.2/xmlresolver-5.2.2.jar',
-        'en16931.jar' => 'com/helger/phive/rules/phive-rules-en16931/4.6.0/phive-rules-en16931-4.6.0.jar',
-        'xrechnung.jar' => 'com/helger/phive/rules/phive-rules-xrechnung/4.6.0/phive-rules-xrechnung-4.6.0.jar',
-    ];
-    private const RULES = [
-        'en16931.jar' => 'external/schematron/1.3.16/cii/EN16931-CII-validation.xslt',
-        'xrechnung.jar' => 'external/schematron/3.0.2/XRechnung-CII-validation.xslt',
-    ];
-
-    private static string $cache;
-
-    public static function setUpBeforeClass(): void
-    {
-        exec('java -version 2>&1', $output, $code);
-        if ($code !== 0) {
-            self::markTestSkipped('Java is not installed.');
-        }
-
-        self::$cache = sys_get_temp_dir() . '/belegwerk-schematron';
-        @mkdir(self::$cache);
-        foreach (self::JARS as $file => $path) {
-            $target = self::$cache . '/' . $file;
-            if (!is_file($target) && !@copy('https://repo1.maven.org/maven2/' . $path, $target)) {
-                self::markTestSkipped("Could not download {$path}.");
-            }
-        }
-        foreach (self::RULES as $jar => $xslt) {
-            if (!is_file(self::$cache . '/' . $xslt)) {
-                $zip = new ZipArchive();
-                $zip->open(self::$cache . '/' . $jar);
-                $zip->extractTo(self::$cache, $xslt);
-                $zip->close();
-            }
-        }
-    }
+    /** XRechnung 3.0.2 with CEN rules 1.3.16; horstoeko's default configuration is older. */
+    private const CONFIGURATION = 'https://github.com/itplr-kosit/validator-configuration-xrechnung/releases/download/v2026-08-31/xrechnung-3.0.2-validator-configuration-2026-08-31.zip';
 
     public static function invoices(): array
     {
@@ -80,6 +43,24 @@ final class SchematronTest extends TestCase
 
         $creditNote = $standard;
         $creditNote['type_code'] = '381';
+        $creditNote['preceding_invoice'] = ['number' => 'RE-2026-0041', 'date' => '2026-03-01'];
+
+        $correctedInvoice = $standard;
+        $correctedInvoice['type_code'] = '384';
+        $correctedInvoice['preceding_invoice'] = ['number' => 'RE-2026-0041'];
+
+        $cashDiscount = $standard;
+        $cashDiscount['cash_discount'] = ['days' => 14, 'percent' => 2];
+
+        $directDebit = $standard;
+        unset($directDebit['bank']);
+        $directDebit['direct_debit'] = ['mandate_reference' => 'M-7', 'creditor_id' => 'DE98ZZZ09999999999', 'iban' => 'DE02120300000000202051'];
+
+        $partiallyPaid = $standard;
+        $partiallyPaid['paid_cents'] = 50000;
+
+        $fullyPaid = $standard;
+        $fullyPaid['paid_cents'] = 106237;
 
         $negativeLine = $standard;
         $negativeLine['items'][] = ['description' => 'Korrektur', 'unit' => 'LS', 'unit_price_cents' => -1000];
@@ -89,38 +70,42 @@ final class SchematronTest extends TestCase
             'small business (§ 19 UStG)' => [$smallBusiness],
             'reverse charge' => [$reverseCharge],
             'credit note' => [$creditNote],
+            'corrected invoice' => [$correctedInvoice],
             'negative line' => [$negativeLine],
+            'cash discount' => [$cashDiscount],
+            'direct debit' => [$directDebit],
+            'partially paid' => [$partiallyPaid],
+            'fully paid' => [$fullyPaid],
         ];
     }
 
     #[DataProvider('invoices')]
     public function testXRechnungPassesOfficialRules(array $invoice): void
     {
-        $file = (string) tempnam(sys_get_temp_dir(), 'belegwerk');
-        file_put_contents($file, (new Belegwerk('http://127.0.0.1:9'))->xrechnung($invoice));
+        $xml = (new Belegwerk('http://127.0.0.1:9'))->xrechnung($invoice);
+        // Without cleanup the validator keeps its downloads for the next run.
+        $validator = (new ZugferdKositValidator($xml))
+            ->setBaseDirectory(self::cacheDirectory())
+            ->setValidatorScenarioDownloadUrl(self::CONFIGURATION)
+            ->disableCleanup()
+            ->validate();
 
-        foreach (self::RULES as $xslt) {
-            self::assertSame([], $this->violations($file, self::$cache . '/' . $xslt), basename($xslt));
+        if ($validator->hasProcessErrors()) {
+            self::markTestSkipped(implode('; ', $validator->getProcessErrors()));
         }
-        unlink($file);
+        self::assertSame([], array_values($validator->getValidationErrors()));
     }
 
-    /** @return list<string> fatal or error assertions that failed */
-    private function violations(string $file, string $xslt): array
+    public static function tearDownAfterClass(): void
     {
-        $classpath = self::$cache . '/saxon.jar' . PATH_SEPARATOR . self::$cache . '/xmlresolver.jar';
-        $command = sprintf('java -cp %s net.sf.saxon.Transform -s:%s -xsl:%s 2>/dev/null', escapeshellarg($classpath), escapeshellarg($file), escapeshellarg($xslt));
-        $report = new DOMDocument();
-        self::assertTrue(@$report->loadXML((string) shell_exec($command)), 'The Schematron run produced no report.');
+        // disableCleanup() also keeps every validated file and its report.
+        array_map(unlink(...), glob(self::cacheDirectory() . '/kositvalidator-*/filetovalidate-*') ?: []);
+    }
 
-        $xpath = new DOMXPath($report);
-        $xpath->registerNamespace('svrl', 'http://purl.oclc.org/dsdl/svrl');
-        self::assertGreaterThan(0, $xpath->query('//svrl:fired-rule')->length, 'No Schematron rule was applied.');
-
-        $violations = [];
-        foreach ($xpath->query('//svrl:failed-assert[@flag != "warning"]') as $assert) {
-            $violations[] = trim(preg_replace('/\s+/', ' ', $assert->textContent) ?? '');
-        }
-        return $violations;
+    private static function cacheDirectory(): string
+    {
+        $directory = sys_get_temp_dir() . '/belegwerk-kosit';
+        @mkdir($directory);
+        return $directory;
     }
 }

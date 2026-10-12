@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Belegwerk\Gotenberg;
 
+use CURLStringFile;
+
 /**
  * Minimal client for Gotenberg's Chromium HTML route.
  *
@@ -21,22 +23,17 @@ final class GotenbergClient
      */
     public function convertHtml(array $files, array $fields): string
     {
-        $boundary = 'belegwerk-' . bin2hex(random_bytes(16));
-        $body = '';
-        foreach ($files as $name => $content) {
-            $body .= "--{$boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{$name}\"\r\n"
-                . "Content-Type: text/html; charset=UTF-8\r\n\r\n{$content}\r\n";
+        // Gotenberg takes every uploaded file regardless of its field name; PHP arrays need unique keys.
+        $body = $fields;
+        foreach (array_keys($files) as $i => $name) {
+            $body["files[{$i}]"] = new CURLStringFile($files[$name], $name, 'text/html');
         }
-        foreach ($fields as $name => $value) {
-            $body .= "--{$boundary}\r\nContent-Disposition: form-data; name=\"{$name}\"\r\n\r\n{$value}\r\n";
-        }
-        $body .= "--{$boundary}--\r\n";
 
         $curl = curl_init(rtrim($this->url, '/') . '/forms/chromium/convert/html');
         curl_setopt_array($curl, [
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => ["Content-Type: multipart/form-data; boundary={$boundary}", 'Accept: application/pdf'],
+            CURLOPT_HTTPHEADER => ['Accept: application/pdf'],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_TIMEOUT => $this->timeout,

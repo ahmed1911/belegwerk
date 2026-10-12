@@ -8,13 +8,16 @@ use DateTimeImmutable;
 use horstoeko\zugferd\codelistsenum\ZugferdCountryCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdElectronicAddressScheme;
 use horstoeko\zugferd\codelistsenum\ZugferdUnitCodes;
+use Symfony\Component\Validator\Constraints\Iban;
+use Symfony\Component\Validator\Validation;
 
 /**
  * Validates invoice data and calculates lines, tax groups and totals.
  *
  * Amounts are integer cents: line amount = round(quantity × unit price), tax per category and rate =
- * round(base × rate / 100). The result contains only arrays and scalars, so it serves both as the
- * input for the e-invoice XML and as the context of (sandboxed) Twig templates.
+ * round(base × rate / 100), both calculated exactly and rounded half away from zero. The result contains only
+ * arrays and scalars, so it serves both as the input for the e-invoice XML and as the context of (sandboxed)
+ * Twig templates.
  *
  * @internal
  */
@@ -70,6 +73,15 @@ final class InvoiceNormalizer
             $this->errors['type_code'] = 'Allowed values: ' . implode(', ', self::TYPE_CODES) . '.';
         }
 
+        $directDebit = $this->directDebit($data['direct_debit'] ?? null);
+        // With a direct debit the seller's bank account is optional; templates may still print it.
+        $bankOmitted = $directDebit !== null && !isset($data['bank']);
+        $paid = $data['paid_cents'] ?? 0;
+        if (!is_int($paid) || $paid < 0) {
+            $this->errors['paid_cents'] = 'Expected non-negative integer cents.';
+            $paid = 0;
+        }
+
         $invoice = [
             'number' => $this->requiredString($data, 'number'),
             'type_code' => $typeCode,
@@ -80,12 +92,15 @@ final class InvoiceNormalizer
             'period' => $this->period($data),
             'buyer_reference' => $this->optionalString($data, 'buyer_reference'),
             'order_reference' => $this->optionalString($data, 'order_reference'),
+            'preceding_invoice' => $this->precedingInvoice($data, $typeCode),
             'payment_terms' => $this->optionalString($data, 'payment_terms'),
             'note' => $this->optionalString($data, 'note'),
             'tax_exemption_reason' => $this->optionalString($data, 'tax_exemption_reason'),
             'seller' => $this->seller($data['seller'] ?? null),
             'buyer' => $this->party($data['buyer'] ?? null, 'buyer', false),
-            'bank' => $this->bank($data['bank'] ?? null),
+            'bank' => $bankOmitted ? null : $this->bank($data['bank'] ?? null),
+            'direct_debit' => $directDebit,
+            'cash_discount' => $this->cashDiscount($data['cash_discount'] ?? null),
             'lines' => $this->lines($data['items'] ?? null),
             'custom' => $this->custom($data),
         ];
@@ -94,8 +109,8 @@ final class InvoiceNormalizer
             throw new ValidationException($this->errors);
         }
 
-        $this->calculate($invoice);
-        $this->checkTaxConsistency($invoice);
+        $this->calculate($invoice, $paid);
+        $this->checkConsistency($invoice);
 
         if ($this->errors !== []) {
             throw new ValidationException($this->errors);
@@ -130,7 +145,7 @@ final class InvoiceNormalizer
         }
     }
 
-    private function calculate(array &$invoice): void
+    private function calculate(array &$invoice, int $paid): void
     {
         $groups = [];
         $net = 0;
@@ -143,7 +158,7 @@ final class InvoiceNormalizer
 
         $taxTotal = 0;
         foreach ($groups as &$group) {
-            $group['amount_cents'] = (int) round($group['base_cents'] * (float) $group['rate'] / 100);
+            $group['amount_cents'] = self::roundedProduct(2, (string) $group['base_cents'], $group['rate']);
             $group['exemption_reason'] = $group['category'] === 'S' || $group['category'] === 'Z'
                 ? null
                 : ($invoice['tax_exemption_reason'] ?? self::EXEMPTION_DEFAULTS[$group['category']] ?? null);
@@ -152,11 +167,53 @@ final class InvoiceNormalizer
         unset($group);
 
         $invoice['tax_groups'] = array_values($groups);
-        $invoice['totals'] = ['net_cents' => $net, 'tax_cents' => $taxTotal, 'gross_cents' => $net + $taxTotal];
+        $gross = $net + $taxTotal;
+        $due = $gross - $paid;
+        $invoice['totals'] = [
+            'net_cents' => $net,
+            'tax_cents' => $taxTotal,
+            'gross_cents' => $gross,
+            'paid_cents' => $paid,
+            'due_cents' => $due,
+        ];
+
+        // XRechnung applies a cash discount without BASISBETRAG to the amount due (BT-115).
+        if ($invoice['cash_discount'] !== null) {
+            $discount = self::roundedProduct(2, (string) $due, $invoice['cash_discount']['percent']);
+            $invoice['cash_discount'] += [
+                'date' => (new DateTimeImmutable($invoice['date']))->modify("+{$invoice['cash_discount']['days']} days")->format('Y-m-d'),
+                'amount_cents' => $discount,
+                'payable_cents' => $due - $discount,
+            ];
+        }
     }
 
-    private function checkTaxConsistency(array $invoice): void
+    /**
+     * Multiplies decimal strings exactly, divides by 10^$shift and rounds half away from zero to an integer,
+     * e.g. roundedProduct(0, '0.58', '25') = 15, where float math yields 14.
+     */
+    private static function roundedProduct(int $shift, string ...$factors): int
     {
+        $digits = 1;
+        $scale = $shift;
+        foreach ($factors as $factor) {
+            $digits *= (int) str_replace('.', '', $factor);
+            $scale += self::decimalPlaces($factor);
+        }
+        if (!is_int($digits)) {
+            throw new ValidationException(['items' => 'Amounts exceed the supported range.']);
+        }
+        $divisor = 10 ** $scale;
+        $magnitude = abs($digits);
+        $rounded = intdiv($magnitude, $divisor) + ($magnitude % $divisor * 2 >= $divisor ? 1 : 0);
+        return $digits < 0 ? -$rounded : $rounded;
+    }
+
+    private function checkConsistency(array $invoice): void
+    {
+        if ($invoice['totals']['paid_cents'] > max(0, $invoice['totals']['gross_cents'])) {
+            $this->errors['paid_cents'] = 'Exceeds the invoice total.';
+        }
         $categories = array_column($invoice['tax_groups'], 'category');
         $seller = $invoice['seller'];
 
@@ -251,22 +308,71 @@ final class InvoiceNormalizer
     private function bank(mixed $data): array
     {
         if (!is_array($data)) {
-            $this->errors['bank'] = 'Required (object with holder, iban).';
+            $this->errors['bank'] = 'Required (object with holder, iban) unless direct_debit is given.';
             return [];
-        }
-        $iban = $this->requiredString($data, 'iban', 'bank.');
-        if ($iban !== null) {
-            $iban = strtoupper(preg_replace('/\s+/', '', $iban) ?? '');
-            if (!self::isValidIban($iban)) {
-                $this->errors['bank.iban'] = 'Invalid IBAN.';
-            }
         }
         return [
             'holder' => $this->requiredString($data, 'holder', 'bank.'),
-            'iban' => $iban,
+            'iban' => $this->iban($data, 'bank.'),
             'bic' => $this->optionalString($data, 'bic', 'bank.'),
             'name' => $this->optionalString($data, 'name', 'bank.'),
         ];
+    }
+
+    private function iban(array $data, string $prefix): ?string
+    {
+        $iban = $this->requiredString($data, 'iban', $prefix);
+        if ($iban === null) {
+            return null;
+        }
+        $iban = strtoupper(preg_replace('/\s+/', '', $iban) ?? '');
+        if (!Validation::createIsValidCallable(new Iban())($iban)) {
+            $this->errors[$prefix . 'iban'] = 'Invalid IBAN.';
+        }
+        return $iban;
+    }
+
+    /** SEPA direct debit (payment means 59): BT-89 mandate, BT-90 creditor ID, BT-91 debited account. */
+    private function directDebit(mixed $data): ?array
+    {
+        if ($data === null) {
+            return null;
+        }
+        if (!is_array($data)) {
+            $this->errors['direct_debit'] = 'Expected an object with mandate_reference, creditor_id and iban.';
+            return null;
+        }
+        return [
+            'mandate_reference' => $this->requiredString($data, 'mandate_reference', 'direct_debit.'),
+            'creditor_id' => $this->requiredString($data, 'creditor_id', 'direct_debit.'),
+            'iban' => $this->iban($data, 'direct_debit.'),
+        ];
+    }
+
+    private function cashDiscount(mixed $data): ?array
+    {
+        if ($data === null) {
+            return null;
+        }
+        if (!is_array($data)) {
+            $this->errors['cash_discount'] = 'Expected an object with days and percent.';
+            return null;
+        }
+        $days = $data['days'] ?? null;
+        if (!is_int($days) || $days < 1) {
+            $this->errors['cash_discount.days'] = 'Expected a positive integer.';
+        }
+        $percent = $data['percent'] ?? null;
+        if (self::isInvalidDecimal($percent, 2) || (float) $percent <= 0 || (float) $percent >= 100) {
+            $this->errors['cash_discount.percent'] = 'Expected a number between 0 and 100 with at most 2 decimals.';
+            $percent = 0;
+        }
+        return ['days' => $days, 'percent' => self::formatDecimal((float) $percent, 2)];
+    }
+
+    private static function isInvalidDecimal(mixed $value, int $maxDecimals): bool
+    {
+        return !is_numeric($value) || abs((float) $value - round((float) $value, $maxDecimals)) > 1e-9;
     }
 
     private function lines(mixed $items): array
@@ -291,11 +397,12 @@ final class InvoiceNormalizer
             }
 
             $quantity = $item['quantity'] ?? 1;
-            if (!is_int($quantity) && !is_float($quantity) && !(is_string($quantity) && is_numeric($quantity))
-                || abs((float) $quantity - round((float) $quantity, 3)) > 1e-9) {
-                $this->errors[$prefix . 'quantity'] = 'Expected a number with at most 3 decimals.';
+            if (self::isInvalidDecimal($quantity, 6)) {
+                $this->errors[$prefix . 'quantity'] = 'Expected a number with at most 6 decimals.';
                 $quantity = 0;
             }
+
+            $quantity = self::formatDecimal((float) $quantity, 6);
 
             $price = $item['unit_price_cents'] ?? null;
             if (!is_int($price)) {
@@ -310,11 +417,11 @@ final class InvoiceNormalizer
                 'id' => (string) ($index + 1),
                 'name' => $name,
                 'description' => $description,
-                'quantity' => self::formatDecimal((float) $quantity, 3),
+                'quantity' => $quantity,
                 'unit' => $unitLabel,
                 'unit_code' => $unitCode,
                 'unit_price_cents' => $price,
-                'net_cents' => (int) round((float) $quantity * $price),
+                'net_cents' => self::roundedProduct(0, $quantity, (string) $price),
                 'tax_category' => $category,
                 'tax_rate' => $rate,
                 'custom' => $this->custom($item, $prefix),
@@ -381,6 +488,24 @@ final class InvoiceNormalizer
         return $start !== null && $end !== null ? ['start' => $start, 'end' => $end] : null;
     }
 
+    /** BT-25/BT-26: the invoice a credit note (381) or corrected invoice (384) refers to. */
+    private function precedingInvoice(array $data, string $typeCode): ?array
+    {
+        if (!isset($data['preceding_invoice'])) {
+            if ($typeCode === '384') {
+                $this->errors['preceding_invoice'] = 'Required for a corrected invoice (type 384).';
+            }
+            return null;
+        }
+        if (!is_array($data['preceding_invoice'])) {
+            $this->errors['preceding_invoice'] = 'Expected an object with number and optional date (YYYY-MM-DD).';
+            return null;
+        }
+        $number = $this->requiredString($data['preceding_invoice'], 'number', 'preceding_invoice.');
+        $date = $this->optionalDate($data['preceding_invoice'], 'date', 'preceding_invoice.');
+        return $number !== null ? ['number' => $number, 'date' => $date] : null;
+    }
+
     /** Free-form template data, passed through unchecked. */
     private function custom(array $data, string $prefix = ''): array
     {
@@ -444,19 +569,9 @@ final class InvoiceNormalizer
         return $formatted === '-0' ? '0' : $formatted;
     }
 
-    public static function isValidIban(string $iban): bool
+    public static function decimalPlaces(string $decimal): int
     {
-        if (!preg_match('/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/', $iban)) {
-            return false;
-        }
-        $digits = '';
-        foreach (str_split(substr($iban, 4) . substr($iban, 0, 4)) as $char) {
-            $digits .= ctype_alpha($char) ? (string) (ord($char) - 55) : $char;
-        }
-        $remainder = 0;
-        foreach (str_split($digits, 7) as $chunk) {
-            $remainder = (int) ($remainder . $chunk) % 97;
-        }
-        return $remainder === 1;
+        $point = strpos($decimal, '.');
+        return $point === false ? 0 : strlen($decimal) - $point - 1;
     }
 }

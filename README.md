@@ -50,19 +50,24 @@ $belegwerk = new Belegwerk('http://127.0.0.1:3000', defaults: [
     'custom' => ['logo' => 'data:image/png;base64,...'],
 ]);
 
-// Invoice: always ZUGFeRD, a normal-looking PDF that also carries the e-invoice XML
-$pdf = $belegwerk->invoice([
+// Templates live in your project: a directory with html.twig (optional header.twig, footer.twig) ...
+$template = Template::fromDirectory(__DIR__ . '/templates/invoice');
+
+$invoice = [
     'number' => 'RE-2026-0042',
     'date' => '2026-09-24',
     'due_date' => '2026-10-08',
     'buyer' => ['name' => 'Beispiel AG', 'address' => ['street' => 'Ring 1', 'zip' => '10115', 'city' => 'Berlin']],
     'items' => [['description' => 'Beratung', 'quantity' => 2, 'unit' => 'Std', 'unit_price_cents' => 9000]],
-]);
+];
 
-// XRechnung XML, e.g. for German public authorities
+// Invoice: always ZUGFeRD, a normal-looking PDF that also carries the e-invoice XML
+$pdf = $belegwerk->invoice($invoice, $template);
+
+// XRechnung XML, e.g. for German public authorities (also needs buyer_reference and the buyer's email)
 $xml = $belegwerk->xrechnung($invoice);
 
-// Your own template, e.g. loaded from your database
+// ... or strings, e.g. loaded from your database
 $pdf = $belegwerk->invoice($invoice, new Template($html, footer: $footerHtml));
 
 // Any other document with free-form data (defaults are merged in as well)
@@ -74,8 +79,14 @@ All methods return the file content as a string.
 ## Invoice data
 
 `$invoice` is an array (for example decoded JSON). Amounts are **integer cents**, dates are `YYYY-MM-DD` strings.
-belegwerk calculates line amounts (`round(quantity × unit_price_cents)`), the tax per category and rate, and the totals.
+belegwerk calculates line amounts (`round(quantity × unit_price_cents)`), the tax per category and rate,
+and the totals. It calculates exactly in decimals, without float errors, and rounds half away from zero.
 See [`examples/invoice.json`](examples/invoice.json).
+
+The array shape is declared as `InvoiceData` on `Belegwerk`, so PHPStan and IDEs that read array shapes check and
+complete it. Use it for your own mapping code with `/** @phpstan-import-type InvoiceData from Belegwerk */` on the
+class and `@return InvoiceData` on the method. PHPStan reports missing required fields and wrong types, but not
+misspelled optional keys.
 
 | Field | Required | Description |
 | --- | --- | --- |
@@ -85,6 +96,7 @@ See [`examples/invoice.json`](examples/invoice.json).
 | `service_date` or `period.start` + `period.end` | | Delivery date or billing period |
 | `buyer_reference` | XRechnung | Buyer reference; the Leitweg-ID for German public authorities |
 | `order_reference`, `payment_terms`, `note` | | Purchase order number, payment terms text, invoice note |
+| `preceding_invoice.number`, `preceding_invoice.date` | for type `384` | Invoice that a credit note (`381`) or corrected invoice (`384`) refers to (BT-25/BT-26) |
 | `tax_exemption_reason` | for category `E` | E.g. "Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG." |
 | `seller.name`, `seller.address` | yes | `address`: `street`, `zip`, `city`, `country` (ISO code, default `DE`), optional `additional` |
 | `seller.vat_id` or `seller.tax_number` | one of them | Without a VAT ID, the tax number also serves as seller identifier in the XML |
@@ -93,8 +105,11 @@ See [`examples/invoice.json`](examples/invoice.json).
 | `buyer.name`, `buyer.address.city` | yes | Street and zip are optional (zip is required for XRechnung) |
 | `buyer.email` or `buyer.electronic_address` | XRechnung | Email, or `{"scheme": "0204", "id": "<Leitweg-ID>"}` |
 | `buyer.vat_id` | for `AE`/`K` | Buyer VAT ID |
-| `bank.holder`, `bank.iban` | yes | SEPA credit transfer; optional `bic`, `name` |
-| `items[]` | yes | `description`, `unit_price_cents`, optional `quantity` (default 1, max. 3 decimals), `name`, `unit`, `unit_code`, `tax_rate` (default 19), `tax_category`, `custom` |
+| `bank.holder`, `bank.iban` | unless `direct_debit` | SEPA credit transfer; optional `bic`, `name` |
+| `direct_debit.mandate_reference`, `.creditor_id`, `.iban` | | SEPA direct debit (payment means 59) from the buyer's account instead of a transfer |
+| `cash_discount.days`, `cash_discount.percent` | | Cash discount (Skonto) on the amount due, written as `#SKONTO#TAGE=…#PROZENT=…#` (XRechnung) |
+| `paid_cents` | | Amount already paid (BT-113); the amount due becomes `gross − paid` |
+| `items[]` | yes | `description`, `unit_price_cents`, optional `quantity` (default 1, max. 6 decimals), `name`, `unit`, `unit_code`, `tax_rate` (default 19), `tax_category`, `custom` |
 | `custom` | | Free-form data for templates, passed through unchanged |
 
 **Units:** `unit` accepts common German names (`Stk`, `Std`, `Tag`, `Monat`, `pauschal`, `km`, `kg`, …) or a UN/ECE Rec. 20/21
@@ -112,8 +127,11 @@ A `Template` has up to three Twig sources, each a complete HTML document:
   `totalPages` are filled in. Header and footer need their own inline styles and must fit into the page margins.
 
 Create one from strings (`new Template($html, $header, $footer)`) or from a directory with `html.twig`, `header.twig`
-and `footer.twig` (`Template::fromDirectory()`). [`templates/standard`](templates/standard) holds the built-in layout
-and is a good starting point.
+and `footer.twig` (`Template::fromDirectory()`). The directory loader also exposes files in `partials/*.twig` as
+`partials/<name>.twig` includes. Includes can only load partials supplied with the template.
+
+belegwerk ships no templates; they live in your project. [`examples/invoice-template`](examples/invoice-template)
+is a German invoice layout to copy as a starting point.
 
 ### Context
 
@@ -122,16 +140,27 @@ For `invoice()` the template receives the validated and calculated invoice:
 | Variable | Content |
 | --- | --- |
 | `number`, `type_code`, `currency`, `date`, `due_date`, `service_date`, `period.start`, `period.end` | As passed in |
-| `buyer_reference`, `order_reference`, `payment_terms`, `note`, `tax_exemption_reason` | As passed in, or `null` |
-| `seller`, `buyer`, `bank` | As passed in; `bank.iban` without spaces |
-| `lines[]` | `id`, `name`, `description`, `quantity` (e.g. `"6.5"`), `unit`, `unit_code`, `unit_price_cents`, `net_cents`, `tax_category`, `tax_rate`, `custom` |
+| `buyer_reference`, `order_reference`, `preceding_invoice`, `payment_terms`, `note`, `tax_exemption_reason` | As passed in, or `null` |
+| `seller`, `buyer`, `bank`, `direct_debit` | As passed in; IBANs without spaces; `bank` is `null` if omitted with a direct debit |
+| `cash_discount` | `days`, `percent`, calculated `date`, `amount_cents`, `payable_cents`; or `null` |
+| `lines[]` | `id`, `name`, `description`, `quantity` (up to 6 decimals), `unit`, `unit_code`, `unit_price_cents`, `net_cents`, `tax_category`, `tax_rate`, `custom` |
 | `tax_groups[]` | `category`, `rate`, `base_cents`, `amount_cents`, `exemption_reason` |
-| `totals` | `net_cents`, `tax_cents`, `gross_cents` |
+| `totals` | `net_cents`, `tax_cents`, `gross_cents`, `paid_cents`, `due_cents` |
 | `custom` | Your free-form data |
 
 For `document()` the context is the array you pass, merged into the defaults. It may only contain arrays and scalars.
 
-The standard template reads these optional `custom` fields: `logo` (data URI), `legal` (list of lines for the footer,
+Undefined variables and keys throw a `Twig\Error\RuntimeError` instead of printing nothing, so a typo like
+`{{ seler.name }}` cannot slip onto an invoice. All invoice fields above are always set (`null` if not given).
+Read optional data such as `custom` fields with `default` or `is defined`:
+
+```twig
+{% if custom.project|default %}Projekt: {{ custom.project }}{% endif %}
+{{ custom.section_title|default('Leistungen') }}
+{% if bank %}IBAN {{ bank.iban }}{% endif %}   {# bank is null with a direct debit #}
+```
+
+The example template reads these optional `custom` fields: `logo` (data URI), `legal` (list of lines for the footer,
 e.g. commercial register and managing directors), `occasion`, `project`, `orderer`, `section_title`.
 
 ### Formatting
@@ -147,14 +176,14 @@ e.g. commercial register and managing directors), `occasion`, `project`, `ordere
 
 Templates run in Twig's sandbox with a strict policy:
 
-- **Tags:** `if`, `for`, `set`
+- **Tags:** `if`, `for`, `set`, `include`
 - **Filters:** `escape`/`e`, `raw`, `upper`, `lower`, `capitalize`, `title`, `trim`, `nl2br`, `striptags`, `replace`,
   `format`, `number_format`, `round`, `abs`, `date`, `default`, `length`, `first`, `last`, `join`, `split`, `slice`,
   `keys`, `merge`, `batch`, `column`, `money`
 - **Tests** such as `is empty`, `is defined`, `is odd`
 - Operators, including `~`, `in`, `??` and arithmetic
 
-Everything else is rejected: all functions, `include`, `extends`, macros, and method or property calls.
+Everything else is rejected: all functions, `extends`, macros, and method or property calls.
 Output is HTML-escaped automatically.
 
 ### Fonts and images
@@ -174,7 +203,7 @@ Embed them as `data:` URIs, since Gotenberg does not load anything from the netw
 | Exception | When |
 | --- | --- |
 | `Belegwerk\Invoice\ValidationException` | Invalid invoice data. `$e->errors` maps field paths such as `items.0.unit_price_cents` to messages. |
-| `Twig\Error\Error` | Template syntax error or sandbox violation (`SecurityError`). `$e->getTemplateLine()` gives the line. |
+| `Twig\Error\Error` | Template syntax error, undefined variable (`RuntimeError`) or sandbox violation (`SecurityError`). `$e->getTemplateLine()` gives the line. |
 | `Belegwerk\Gotenberg\GotenbergException` | Gotenberg is unreachable or cannot render the document. |
 
 Tip: render a preview when a user saves a template, so errors show up there and not during invoicing.
@@ -195,25 +224,28 @@ horstoeko's `ZugferdKositValidator`, which also supports a remote KoSIT daemon.
 
 ## Not supported (yet)
 
-Allowances and charges, prepayments, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
+Allowances and charges, payment by card or cash, currencies other than EUR, VAT category `O`, UBL syntax, reading incoming
 e-invoices.
 
 ## Tested with
 
 - XRechnung XML for a standard invoice, a small business (§ 19 UStG), reverse charge, a credit note and a negative
-  line: 0 errors with the official Schematron rules EN 16931 CII 1.3.16 and XRechnung 3.0.2 (part of the test suite)
-- ZUGFeRD PDFs from `invoice()`: PDF/A-3b valid according to veraPDF, embedded XML without Schematron errors
+  line: accepted by the official KoSIT validator with the XRechnung 3.0.2 configuration (EN 16931 CII rules 1.3.16,
+  part of the test suite)
+- ZUGFeRD PDFs from `invoice()`: PDF/A-3b valid according to veraPDF (part of the test suite), embedded XML checked
+  against the XSD schema on every call
 
 ## Development
 
 ```sh
 composer install
 docker compose up -d
-composer test          # tests that need Gotenberg are skipped if it is not reachable (GOTENBERG_URL)
+composer test          # tests that need Gotenberg or veraPDF are skipped if unreachable (GOTENBERG_URL, VERAPDF_URL)
 ```
 
-The `schematron` test group validates XRechnung output with the official rules. It needs Java and downloads the rule
-packages from Maven Central once (cached in the system temp directory). Skip it with
+The `schematron` test group validates XRechnung output with the KoSIT validator via horstoeko's `ZugferdKositValidator`.
+It needs Java and downloads the validator and its XRechnung configuration from GitHub once (cached in the system temp
+directory). Skip it with
 `vendor/bin/phpunit --exclude-group schematron`.
 
 ## License

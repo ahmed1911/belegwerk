@@ -7,6 +7,7 @@ namespace Belegwerk\Invoice;
 use DateTimeImmutable;
 use horstoeko\zugferd\ZugferdDocumentBuilder;
 use horstoeko\zugferd\ZugferdProfiles;
+use horstoeko\zugferd\ZugferdSettings;
 use horstoeko\zugferd\ZugferdXsdValidator;
 use InvalidArgumentException;
 use RuntimeException;
@@ -27,7 +28,28 @@ final class EInvoiceBuilder
         self::PROFILE_XRECHNUNG => ZugferdProfiles::PROFILE_XRECHNUNG_3,
     ];
 
-    public function build(array $invoice, string $profile): ZugferdDocumentBuilder
+    /**
+     * Writes the XML and checks it against the XSD schema of the profile.
+     */
+    public function toXml(array $invoice, string $profile): string
+    {
+        // horstoeko reads the quantity decimals globally while serializing; widen them for this invoice only.
+        $originalDecimals = ZugferdSettings::getQuantityDecimals();
+        $quantityDecimals = array_map(InvoiceNormalizer::decimalPlaces(...), array_column($invoice['lines'], 'quantity'));
+        ZugferdSettings::setQuantityDecimals(max($originalDecimals, ...$quantityDecimals));
+        try {
+            $document = $this->build($invoice, $profile);
+            $validator = (new ZugferdXsdValidator($document))->validate();
+            if ($validator->hasValidationErrors()) {
+                throw new RuntimeException('The generated e-invoice XML violates the schema: ' . implode('; ', $validator->validationErrors()));
+            }
+            return $document->getContent();
+        } finally {
+            ZugferdSettings::setQuantityDecimals($originalDecimals);
+        }
+    }
+
+    private function build(array $invoice, string $profile): ZugferdDocumentBuilder
     {
         $profileId = self::PROFILES[$profile] ?? throw new InvalidArgumentException("Unknown profile: {$profile}");
         $amount = static fn (int $cents): float => $cents / 100;
@@ -44,6 +66,14 @@ final class EInvoiceBuilder
         }
         if ($invoice['order_reference'] !== null) {
             $document->setDocumentBuyerOrderReferencedDocument($invoice['order_reference']);
+        }
+        if ($invoice['preceding_invoice'] !== null) {
+            $preceding = $invoice['preceding_invoice'];
+            $document->addDocumentInvoiceReferencedDocument(
+                $preceding['number'],
+                null,
+                $preceding['date'] !== null ? $date($preceding['date']) : null,
+            );
         }
 
         $seller = $invoice['seller'];
@@ -97,16 +127,26 @@ final class EInvoiceBuilder
             $document->setDocumentBillingPeriod($date($invoice['period']['start']), $date($invoice['period']['end']), null);
         }
 
-        $document->addDocumentPaymentMeanToCreditTransfer(
-            $invoice['bank']['iban'],
-            $invoice['bank']['holder'],
-            null,
-            $invoice['bank']['bic'],
-            $invoice['number'],
-        );
-        $document->addDocumentPaymentTerm(
-            $invoice['payment_terms'] ?? 'Zahlbar bis zum ' . $date($invoice['due_date'])->format('d.m.Y') . ' ohne Abzug.',
+        $directDebit = $invoice['direct_debit'];
+        if ($directDebit !== null) {
+            $document->addDocumentPaymentMeanToDirectDebit($directDebit['iban'], $directDebit['creditor_id']);
+        } else {
+            $document->addDocumentPaymentMeanToCreditTransfer(
+                $invoice['bank']['iban'],
+                $invoice['bank']['holder'],
+                null,
+                $invoice['bank']['bic'],
+                $invoice['number'],
+            );
+        }
+        $discount = $invoice['cash_discount'];
+        $document->addDocumentPaymentTermXRechnung(
+            $invoice['payment_terms'] ?? $this->defaultPaymentTerms($invoice),
+            $discount !== null ? [$discount['days']] : [],
+            $discount !== null ? [(float) $discount['percent']] : [],
+            [],
             $date($invoice['due_date']),
+            $directDebit['mandate_reference'] ?? null,
         );
 
         foreach ($invoice['tax_groups'] as $group) {
@@ -123,12 +163,14 @@ final class EInvoiceBuilder
         $totals = $invoice['totals'];
         $document->setDocumentSummation(
             $amount($totals['gross_cents']),
-            $amount($totals['gross_cents']),
+            $amount($totals['due_cents']),
             $amount($totals['net_cents']),
             null,
             null,
             $amount($totals['net_cents']),
             $amount($totals['tax_cents']),
+            null,
+            $totals['paid_cents'] !== 0 ? $amount($totals['paid_cents']) : null,
         );
 
         foreach ($invoice['lines'] as $line) {
@@ -145,20 +187,17 @@ final class EInvoiceBuilder
                 ->addDocumentPositionTax($line['tax_category'], 'VAT', (float) $line['tax_rate'])
                 ->setDocumentPositionLineSummation($amount($line['net_cents']));
         }
-
         return $document;
     }
 
-    /**
-     * Writes the XML and checks it against the XSD schema of the profile.
-     */
-    public function toXml(array $invoice, string $profile): string
+    /** BT-20 lands in the XML and is read by people, hence German. The cash discount line is prepended separately. */
+    private function defaultPaymentTerms(array $invoice): string
     {
-        $document = $this->build($invoice, $profile);
-        $validator = (new ZugferdXsdValidator($document))->validate();
-        if ($validator->hasValidationErrors()) {
-            throw new RuntimeException('The generated e-invoice XML violates the schema: ' . implode('; ', $validator->validationErrors()));
-        }
-        return $document->getContent();
+        $dueDate = (new DateTimeImmutable($invoice['due_date']))->format('d.m.Y');
+        return match (true) {
+            $invoice['totals']['due_cents'] <= 0 => 'Der Rechnungsbetrag ist bereits beglichen.',
+            $invoice['direct_debit'] !== null => "Der Betrag wird zum {$dueDate} per SEPA-Lastschrift eingezogen.",
+            default => "Zahlbar bis zum {$dueDate} ohne Abzug.",
+        };
     }
 }

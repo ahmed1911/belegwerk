@@ -16,7 +16,14 @@ final class Template
         public readonly string $html,
         public readonly ?string $header = null,
         public readonly ?string $footer = null,
+        public readonly array $partials = [],
     ) {
+        foreach ($partials as $name => $source) {
+            $isPartial = is_string($name) && is_string($source) && preg_match('#^partials/[a-zA-Z0-9_-]+\.twig$#D', $name) === 1;
+            if (!$isPartial) {
+                throw new InvalidArgumentException('Template partials must use the partials/<name>.twig format.');
+            }
+        }
     }
 
     /**
@@ -28,18 +35,16 @@ final class Template
             ? (string) file_get_contents("{$directory}/{$file}")
             : null;
 
+        $partials = [];
+        foreach (array_filter(glob("{$directory}/partials/*.twig") ?: [], is_file(...)) as $path) {
+            $partials['partials/' . basename($path)] = (string) file_get_contents($path);
+        }
+
         return new self(
             $read('html.twig') ?? throw new InvalidArgumentException("No html.twig found in {$directory}."),
             $read('header.twig'),
             $read('footer.twig'),
+            $partials,
         );
-    }
-
-    /**
-     * The built-in German invoice layout.
-     */
-    public static function standard(): self
-    {
-        return self::fromDirectory(dirname(__DIR__) . '/templates/standard');
     }
 }

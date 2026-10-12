@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Belegwerk\Tests;
 
 use Belegwerk\Belegwerk;
+use Belegwerk\Invoice\EInvoiceBuilder;
+use Belegwerk\Invoice\InvoiceNormalizer;
 use Belegwerk\Invoice\ValidationException;
 use horstoeko\zugferd\ZugferdDocumentReader;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 /**
  * XML creation needs no Gotenberg, so these tests always run.
@@ -47,6 +50,75 @@ final class EInvoiceBuilderTest extends TestCase
         self::assertStringContainsString('<ram:ChargeAmount>10.00</ram:ChargeAmount>', $xml);
         self::assertStringContainsString('<ram:BilledQuantity unitCode="LS">-1.00</ram:BilledQuantity>', $xml);
         self::assertStringContainsString('<ram:LineTotalAmount>-10.00</ram:LineTotalAmount>', $xml);
+    }
+
+    public function testSixQuantityDecimalsReachTheEInvoice(): void
+    {
+        $data = InvoiceNormalizerTest::example();
+        $data['items'] = [[
+            'description' => 'Team shift',
+            'quantity' => 3.703701,
+            'unit' => 'Std.',
+            'unit_price_cents' => 1000,
+        ]];
+
+        $xml = $this->belegwerk()->xrechnung($data);
+
+        self::assertStringContainsString('<ram:BilledQuantity unitCode="HUR">3.703701</ram:BilledQuantity>', $xml);
+        self::assertStringContainsString('<ram:LineTotalAmount>37.04</ram:LineTotalAmount>', $xml);
+    }
+
+    public function testCreditNoteReferencesThePrecedingInvoice(): void
+    {
+        $data = InvoiceNormalizerTest::example();
+        $data['type_code'] = '381';
+        $data['preceding_invoice'] = ['number' => 'RE-2026-0041', 'date' => '2026-03-01'];
+
+        $xml = $this->belegwerk()->xrechnung($data);
+
+        self::assertMatchesRegularExpression(
+            '#<ram:InvoiceReferencedDocument>\s*<ram:IssuerAssignedID>RE-2026-0041</ram:IssuerAssignedID>\s*'
+            . '<ram:FormattedIssueDateTime>\s*<qdt:DateTimeString format="102">20260301</qdt:DateTimeString>#',
+            $xml,
+        );
+    }
+
+    public function testCashDiscountAndPrepaidAmountAreWrittenToXml(): void
+    {
+        $data = InvoiceNormalizerTest::example();
+        $data['paid_cents'] = 6237;
+        $data['cash_discount'] = ['days' => 14, 'percent' => 2];
+
+        $xml = $this->belegwerk()->xrechnung($data);
+
+        self::assertStringContainsString("<ram:Description>#SKONTO#TAGE=14#PROZENT=2.00#\nZahlbar bis zum", $xml);
+        self::assertStringContainsString('<ram:TotalPrepaidAmount>62.37</ram:TotalPrepaidAmount>', $xml);
+        self::assertStringContainsString('<ram:DuePayableAmount>1000.00</ram:DuePayableAmount>', $xml);
+    }
+
+    public function testDirectDebitIsWrittenToXml(): void
+    {
+        $data = InvoiceNormalizerTest::example();
+        unset($data['bank']);
+        $data['direct_debit'] = ['mandate_reference' => 'M-7', 'creditor_id' => 'DE98ZZZ09999999999', 'iban' => 'DE02120300000000202051'];
+
+        $xml = $this->belegwerk()->xrechnung($data);
+
+        self::assertStringContainsString('<ram:TypeCode>59</ram:TypeCode>', $xml);
+        self::assertStringContainsString('<ram:CreditorReferenceID>DE98ZZZ09999999999</ram:CreditorReferenceID>', $xml);
+        self::assertStringContainsString('<ram:DirectDebitMandateID>M-7</ram:DirectDebitMandateID>', $xml);
+        self::assertStringContainsString('<ram:IBANID>DE02120300000000202051</ram:IBANID>', $xml);
+        self::assertStringContainsString('per SEPA-Lastschrift eingezogen', $xml);
+    }
+
+    public function testZugferdXmlIsCheckedAgainstTheSchema(): void
+    {
+        $invoice = (new InvoiceNormalizer())->normalize(InvoiceNormalizerTest::example());
+        $invoice['number'] = '';
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('violates the schema');
+        (new EInvoiceBuilder())->toXml($invoice, EInvoiceBuilder::PROFILE_EN16931);
     }
 
     public function testSmallBusinessWithoutVatIdUsesTaxNumberAsSellerIdentifier(): void
