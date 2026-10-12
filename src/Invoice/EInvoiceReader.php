@@ -125,9 +125,6 @@ final class EInvoiceReader
         }
         $adjustments = $this->adjustments($this->nodes('ram:SpecifiedTradeAllowanceCharge', $settlement), self::CII_ADJUSTMENT, true);
         $delivery = $this->node('rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeDelivery', $root);
-        $shipTo = $this->node('ram:ShipToTradeParty', $delivery);
-        $shipToAddress = $this->node('ram:PostalTradeAddress', $shipTo);
-        $globalId = $this->node('ram:GlobalID', $shipTo);
 
         return $this->invoice([
             'syntax' => 'CII',
@@ -154,17 +151,7 @@ final class EInvoiceReader
             'note' => $this->joined('ram:IncludedNote/ram:Content', $header),
             'seller' => $seller,
             'buyer' => $this->ciiParty($this->node('ram:BuyerTradeParty', $agreement)),
-            'delivery' => $shipTo === null ? null : $this->delivery(
-                $this->text('ram:Name', $shipTo),
-                $shipToAddress === null ? null : [
-                    $this->text('ram:LineOne', $shipToAddress),
-                    $this->text('ram:LineTwo', $shipToAddress),
-                    $this->text('ram:PostcodeCode', $shipToAddress),
-                    $this->text('ram:CityName', $shipToAddress),
-                    $this->text('ram:CountryID', $shipToAddress),
-                ],
-                $globalId ?? $this->node('ram:ID', $shipTo),
-            ),
+            'delivery' => $this->ciiDelivery($this->node('ram:ShipToTradeParty', $delivery)),
             'bank' => $this->bank(
                 $meansCode,
                 $this->text('ram:PayeePartyCreditorFinancialAccount/ram:IBANID', $means),
@@ -203,22 +190,42 @@ final class EInvoiceReader
 
     private function ciiParty(?DOMNode $party): array
     {
-        $address = $this->node('ram:PostalTradeAddress', $party);
         $contact = $this->node('ram:DefinedTradeContact', $party);
         $electronic = $this->node('ram:URIUniversalCommunication/ram:URIID', $party);
         return $this->party(
             $this->text('ram:Name', $party),
-            $this->text('ram:LineOne', $address),
-            $this->text('ram:LineTwo', $address),
-            $this->text('ram:PostcodeCode', $address),
-            $this->text('ram:CityName', $address),
-            $this->text('ram:CountryID', $address),
+            $this->ciiAddress($this->node('ram:PostalTradeAddress', $party)),
             $this->text("ram:SpecifiedTaxRegistration/ram:ID[@schemeID='VA']", $party),
             $this->text("ram:SpecifiedTaxRegistration/ram:ID[@schemeID='FC']", $party),
             $this->text('ram:EmailURIUniversalCommunication/ram:URIID', $contact),
             $this->text('ram:TelephoneUniversalCommunication/ram:CompleteNumber', $contact),
             $this->text('ram:PersonName', $contact),
             $electronic,
+        );
+    }
+
+    /** BG-13 in CII: the ship-to party, or null without one. */
+    private function ciiDelivery(?DOMNode $shipTo): ?array
+    {
+        if ($shipTo === null) {
+            return null;
+        }
+        $address = $this->node('ram:PostalTradeAddress', $shipTo);
+        return [
+            'name' => $this->text('ram:Name', $shipTo),
+            'address' => $address === null ? null : $this->ciiAddress($address),
+            'location_id' => $this->identifier($this->node('ram:GlobalID', $shipTo) ?? $this->node('ram:ID', $shipTo)),
+        ];
+    }
+
+    private function ciiAddress(?DOMNode $address): array
+    {
+        return $this->address(
+            $this->text('ram:LineOne', $address),
+            $this->text('ram:LineTwo', $address),
+            $this->text('ram:PostcodeCode', $address),
+            $this->text('ram:CityName', $address),
+            $this->text('ram:CountryID', $address),
         );
     }
 
@@ -332,15 +339,10 @@ final class EInvoiceReader
 
     private function ublParty(?DOMNode $party): array
     {
-        $address = $this->node('cac:PostalAddress', $party);
         $contact = $this->node('cac:Contact', $party);
         return $this->party(
             $this->text('cac:PartyLegalEntity/cbc:RegistrationName', $party) ?? $this->text('cac:PartyName/cbc:Name', $party),
-            $this->text('cbc:StreetName', $address),
-            $this->text('cbc:AdditionalStreetName', $address),
-            $this->text('cbc:PostalZone', $address),
-            $this->text('cbc:CityName', $address),
-            $this->text('cac:Country/cbc:IdentificationCode', $address),
+            $this->ublAddress($this->node('cac:PostalAddress', $party)),
             $this->text("cac:PartyTaxScheme[cac:TaxScheme/cbc:ID='VAT']/cbc:CompanyID", $party),
             $this->text("cac:PartyTaxScheme[cac:TaxScheme/cbc:ID!='VAT']/cbc:CompanyID", $party),
             $this->text('cbc:ElectronicMail', $contact),
@@ -359,35 +361,41 @@ final class EInvoiceReader
         if ($name === null && $address === null && $location === null) {
             return null;
         }
-        return $this->delivery(
-            $name,
-            $address === null ? null : [
-                $this->text('cbc:StreetName', $address),
-                $this->text('cbc:AdditionalStreetName', $address),
-                $this->text('cbc:PostalZone', $address),
-                $this->text('cbc:CityName', $address),
-                $this->text('cac:Country/cbc:IdentificationCode', $address),
-            ],
-            $location,
+        return [
+            'name' => $name,
+            'address' => $address === null ? null : $this->ublAddress($address),
+            'location_id' => $this->identifier($location),
+        ];
+    }
+
+    private function ublAddress(?DOMNode $address): array
+    {
+        return $this->address(
+            $this->text('cbc:StreetName', $address),
+            $this->text('cbc:AdditionalStreetName', $address),
+            $this->text('cbc:PostalZone', $address),
+            $this->text('cbc:CityName', $address),
+            $this->text('cac:Country/cbc:IdentificationCode', $address),
         );
     }
 
-    /** @param ?list<?string> $address street, additional, zip, city, country */
-    private function delivery(?string $name, ?array $address, ?DOMNode $location): array
+    private function address(?string $street, ?string $additional, ?string $zip, ?string $city, ?string $country): array
     {
-        $scheme = $location instanceof \DOMElement ? $location->getAttribute('schemeID') : '';
-        $id = trim((string) $location?->textContent);
-        return [
-            'name' => $name,
-            'address' => $address === null ? null : array_combine(['street', 'additional', 'zip', 'city', 'country'], $address),
-            'location_id' => $id !== '' ? ['scheme' => $scheme !== '' ? $scheme : null, 'id' => $id] : null,
-        ];
+        return ['street' => $street, 'additional' => $additional, 'zip' => $zip, 'city' => $city, 'country' => $country];
+    }
+
+    /** An identifier with its optional schemeID, e.g. an electronic address (BT-49) or a location ID (BT-71). */
+    private function identifier(?DOMNode $node): ?array
+    {
+        $id = trim((string) $node?->textContent);
+        $scheme = $node instanceof \DOMElement ? $node->getAttribute('schemeID') : '';
+        return $id !== '' ? ['scheme' => $scheme !== '' ? $scheme : null, 'id' => $id] : null;
     }
 
     /** BG-24; content holds the decoded file, which comes from outside: never use its filename as a path unchecked. */
     private function attachment(?string $id, ?string $description, ?string $url, ?DOMNode $binary): array
     {
-        $content = $binary === null ? false : base64_decode(preg_replace('/\s+/', '', $binary->textContent) ?? '', true);
+        $content = $binary === null ? false : base64_decode($binary->textContent, true);
         $element = $binary instanceof \DOMElement ? $binary : null;
         return [
             'id' => $id,
@@ -410,11 +418,7 @@ final class EInvoiceReader
 
     private function party(
         ?string $name,
-        ?string $street,
-        ?string $additional,
-        ?string $zip,
-        ?string $city,
-        ?string $country,
+        array $address,
         ?string $vatId,
         ?string $taxNumber,
         ?string $email,
@@ -422,17 +426,15 @@ final class EInvoiceReader
         ?string $contactName,
         ?DOMNode $electronicAddress,
     ): array {
-        $scheme = $electronicAddress instanceof \DOMElement ? $electronicAddress->getAttribute('schemeID') : '';
-        $id = trim((string) $electronicAddress?->textContent);
         return [
             'name' => $name,
-            'address' => ['street' => $street, 'additional' => $additional, 'zip' => $zip, 'city' => $city, 'country' => $country],
+            'address' => $address,
             'vat_id' => $vatId,
             'tax_number' => $taxNumber,
             'email' => $email,
             'phone' => $phone,
             'contact_name' => $contactName,
-            'electronic_address' => $id !== '' ? ['scheme' => $scheme, 'id' => $id] : null,
+            'electronic_address' => $this->identifier($electronicAddress),
         ];
     }
 

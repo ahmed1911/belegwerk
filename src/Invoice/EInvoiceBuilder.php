@@ -89,9 +89,11 @@ final class EInvoiceBuilder
 
         $delivery = $invoice['delivery'];
         if ($delivery !== null) {
+            // BT-71 with a scheme is a global ID (e.g. a GLN), without one an ID agreed with the buyer.
             $location = $delivery['location_id'];
-            $document->setDocumentShipTo($delivery['name'], $location !== null && $location['scheme'] === null ? $location['id'] : null);
-            if ($location !== null && $location['scheme'] !== null) {
+            $global = $location !== null && $location['scheme'] !== null;
+            $document->setDocumentShipTo($delivery['name'], $global ? null : $location['id'] ?? null);
+            if ($global) {
                 $document->addDocumentShipToGlobalId($location['id'], $location['scheme']);
             }
             if ($delivery['address'] !== null) {

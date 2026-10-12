@@ -6,11 +6,13 @@ namespace Belegwerk\Invoice;
 
 use DateTimeImmutable;
 use finfo;
+use horstoeko\mimedb\MimeDb;
 use horstoeko\zugferd\codelistsenum\ZugferdAllowanceCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdChargeCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdCountryCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdElectronicAddressScheme;
 use horstoeko\zugferd\codelistsenum\ZugferdUnitCodes;
+use horstoeko\zugferd\ZugferdObjectHelper;
 use Symfony\Component\Validator\Constraints\Iban;
 use Symfony\Component\Validator\Validation;
 
@@ -57,13 +59,6 @@ final class InvoiceNormalizer
         'AE' => 'Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge)',
         'K' => 'Steuerfreie innergemeinschaftliche Lieferung',
         'G' => 'Steuerfreie Ausfuhrlieferung',
-    ];
-
-    /** MIME types allowed for attachments (BT-125-1) with the file extension horstoeko gives them in the XML. */
-    private const ATTACHMENT_TYPES = [
-        'application/pdf' => 'pdf', 'image/png' => 'png', 'image/jpeg' => 'jpeg', 'text/csv' => 'csv',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
-        'application/vnd.oasis.opendocument.spreadsheet' => 'ods',
     ];
 
     /** @var array<string, string> */
@@ -395,7 +390,8 @@ final class InvoiceNormalizer
         }
         $location = $data['location_id'] ?? null;
         if (is_string($location) || is_int($location)) {
-            $location = trim((string) $location) !== '' ? ['scheme' => null, 'id' => trim((string) $location)] : null;
+            $id = trim((string) $location);
+            $location = $id !== '' ? ['scheme' => null, 'id' => $id] : null;
         } elseif (is_array($location) && is_string($location['scheme'] ?? null) && preg_match('/^\d{4}$/', $location['scheme'])
             && is_string($location['id'] ?? null) && trim($location['id']) !== '') {
             $location = ['scheme' => $location['scheme'], 'id' => trim($location['id'])];
@@ -416,7 +412,7 @@ final class InvoiceNormalizer
 
     /**
      * BG-24 supporting documents: embedded files (BT-125) and links (BT-124). The MIME type is detected from the
-     * content and the file extension follows it, as horstoeko writes it into the XML.
+     * content and the file extension follows it, with horstoeko's own list and lookup, so the name matches the XML.
      */
     private function attachments(mixed $data): array
     {
@@ -447,10 +443,10 @@ final class InvoiceNormalizer
                 // Only the name reaches the XML; a path would leak the sender's directories.
                 $filename = basename(str_replace('\\', '/', $filename));
                 [$filename, $mime] = $this->attachmentType($content, $filename, $prefix);
-                if ($mime !== null && in_array(strtolower($filename), $filenames, true)) {
+                if ($mime !== null && isset($filenames[strtolower($filename)])) {
                     $this->errors[$prefix . 'filename'] = 'File names must be unique (BR-DE-22).';
                 }
-                $filenames[] = strtolower($filename);
+                $filenames[strtolower($filename)] = true;
             }
             $id = $this->optionalString($attachment, 'id', $prefix)
                 ?? ($filename !== null ? pathinfo($filename, PATHINFO_FILENAME) : null);
@@ -473,15 +469,20 @@ final class InvoiceNormalizer
     /** @return array{string, ?string} the file name with the extension of the detected type, and the type */
     private function attachmentType(string $content, string $filename, string $prefix): array
     {
-        $mime = (new finfo())->buffer($content, FILEINFO_MIME_TYPE);
+        static $finfo;
+        $finfo ??= new finfo();
+        $mime = $finfo->buffer($content, FILEINFO_MIME_TYPE);
         if ($mime === 'text/plain' && strtolower(pathinfo($filename, PATHINFO_EXTENSION)) === 'csv') {
             $mime = 'text/csv';
         }
-        if (!isset(self::ATTACHMENT_TYPES[$mime])) {
+        $extension = in_array($mime, ZugferdObjectHelper::SUPPORTEDTMIMETYPES, true)
+            ? (new MimeDb())->findFirstFileExtensionByMimeType($mime)
+            : null;
+        if ($extension === null) {
             $this->errors[$prefix . 'content'] = "File type {$mime} is not allowed in e-invoices; allowed are PDF, PNG, JPEG, CSV, XLSX and ODS.";
             return [$filename, null];
         }
-        return [pathinfo($filename, PATHINFO_FILENAME) . '.' . self::ATTACHMENT_TYPES[$mime], $mime];
+        return [pathinfo($filename, PATHINFO_FILENAME) . '.' . $extension, $mime];
     }
 
     private function bank(mixed $data): array
