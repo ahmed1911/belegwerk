@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * Validates generated XRechnung XML with the official KoSIT validator (XSD, EN 16931 and XRechnung Schematron).
  * Needs Java; validator and rules are downloaded once and cached in the system temp directory.
- * Run without it: phpunit --exclude-group schematron
+ * With KOSIT_URL set, a running KoSIT daemon is used instead. Run without it: phpunit --exclude-group schematron
  */
 #[Group('schematron')]
 final class SchematronTest extends TestCase
@@ -75,6 +75,13 @@ final class SchematronTest extends TestCase
     public function testXRechnungPassesOfficialRules(array $invoice): void
     {
         $xml = (new Belegwerk('http://127.0.0.1:9'))->xrechnung($invoice);
+        $daemon = getenv('KOSIT_URL');
+
+        self::assertSame([], $daemon ? self::daemonErrors($daemon, $xml) : self::localErrors($xml));
+    }
+
+    private static function localErrors(string $xml): array
+    {
         // Without cleanup the validator keeps its downloads for the next run.
         $validator = (new ZugferdKositValidator($xml))
             ->setBaseDirectory(self::cacheDirectory())
@@ -85,7 +92,34 @@ final class SchematronTest extends TestCase
         if ($validator->hasProcessErrors()) {
             self::markTestSkipped(implode('; ', $validator->getProcessErrors()));
         }
-        self::assertSame([], array_values($validator->getValidationErrors()));
+        return array_values($validator->getValidationErrors());
+    }
+
+    /**
+     * A KoSIT validator running as a daemon (KOSIT_URL, as in CI) skips the JVM start for every invoice.
+     * It answers 200 for accepted and 406 for rejected documents; horstoeko's remote mode can miss a rejection.
+     */
+    private static function daemonErrors(string $url, string $xml): array
+    {
+        $curl = curl_init($url);
+        curl_setopt_array($curl, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $xml,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/xml'],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 60,
+        ]);
+        $report = curl_exec($curl);
+        if ($report === false) {
+            self::fail("KoSIT daemon is not reachable at {$url}: " . curl_error($curl));
+        }
+
+        $status = curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+        if ($status === 200) {
+            return [];
+        }
+        preg_match_all('#<rep:message\b[^>]*level="error"[^>]*>(.*?)</rep:message>#s', $report, $matches);
+        return ["KoSIT rejected the invoice (HTTP {$status})", ...array_map(trim(...), $matches[1])];
     }
 
     public static function tearDownAfterClass(): void

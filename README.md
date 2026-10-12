@@ -283,7 +283,7 @@ composer test          # tests that need Gotenberg or veraPDF are skipped if unr
 
 The `schematron` test group validates XRechnung output with the KoSIT validator via horstoeko's `ZugferdKositValidator`.
 It needs Java and downloads the validator and its XRechnung configuration from GitHub once (cached in the system temp
-directory). Skip it with
+directory). With `KOSIT_URL` set, the tests use a running KoSIT daemon instead, as CI does. Skip it with
 `vendor/bin/phpunit --exclude-group schematron`.
 
 ## License
