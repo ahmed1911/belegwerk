@@ -64,6 +64,34 @@ final class BelegwerkTest extends TestCase
         self::assertSame(106237, $invoice['totals']['due_cents']);
     }
 
+    public function testExampleTemplateShowsDeliveryAndAttachmentsAndThePdfCarriesThem(): void
+    {
+        $data = InvoiceNormalizerTest::withDeliveryAndAttachments(InvoiceNormalizerTest::example());
+
+        $pdf = $this->gotenberg()->invoice($data, Template::fromDirectory(self::EXAMPLE_TEMPLATE));
+
+        $text = $this->text($pdf);
+        self::assertStringContainsString('Lieferanschrift:', $text);
+        self::assertStringContainsString('Industriestraße 9', $text);
+        self::assertStringContainsString('Lieferschein:', $text);
+        self::assertStringContainsString('Anlagen: Stundenzettel September, Lieferschein, Abnahmeprotokoll', $text);
+
+        $invoice = $this->gotenberg()->read($pdf);
+        self::assertSame('Stadtverwaltung Beispielstadt, Bauhof', $invoice['delivery']['name']);
+        self::assertSame(InvoiceNormalizerTest::PDF, $invoice['attachments'][0]['content']);
+    }
+
+    public function testTemplatesGetAttachmentsWithoutTheirContent(): void
+    {
+        $data = InvoiceNormalizerTest::withDeliveryAndAttachments(InvoiceNormalizerTest::example());
+        $template = new Template('<p>{% for a in attachments %}{{ a.filename }} {{ a.size }} {{ a.content is defined ? "mit" : "ohne" }} Inhalt; {% endfor %}</p>');
+
+        $text = $this->text($this->gotenberg()->invoice($data, $template));
+
+        self::assertStringContainsString('stundenzettel-2026-09.pdf ' . strlen(InvoiceNormalizerTest::PDF) . ' ohne Inhalt', $text);
+        self::assertStringNotContainsString('mit Inhalt', $text);
+    }
+
     public function testInvoiceIsPdfA3bCompliant(): void
     {
         $url = $this->reachable(getenv('VERAPDF_URL') ?: 'http://127.0.0.1:3001', 'veraPDF');

@@ -127,6 +127,28 @@ final class EInvoiceBuilderTest extends TestCase
         self::assertStringContainsString('per SEPA-Lastschrift eingezogen', $xml);
     }
 
+    public function testDeliveryAndAttachmentsAreWrittenToXml(): void
+    {
+        $data = InvoiceNormalizerTest::withDeliveryAndAttachments(InvoiceNormalizerTest::example());
+
+        $xml = $this->belegwerk()->xrechnung($data);
+
+        self::assertMatchesRegularExpression('#<ram:ShipToTradeParty>\s*<ram:GlobalID schemeID="0088">4012345000009</ram:GlobalID>\s*<ram:Name>Stadtverwaltung Beispielstadt, Bauhof</ram:Name>#', $xml);
+        self::assertStringContainsString('<ram:CityName>Berlin</ram:CityName>', $xml);
+        self::assertMatchesRegularExpression('#<ram:DespatchAdviceReferencedDocument>\s*<ram:IssuerAssignedID>LS-1234</ram:IssuerAssignedID>#', $xml);
+        self::assertStringContainsString(
+            '<ram:AttachmentBinaryObject mimeCode="application/pdf" filename="stundenzettel-2026-09.pdf">' . base64_encode(InvoiceNormalizerTest::PDF) . '</ram:AttachmentBinaryObject>',
+            $xml,
+        );
+        self::assertStringContainsString('filename="Lieferschein.png"', $xml);
+        self::assertStringContainsString('<ram:URIID>https://kunde.example/abnahme/77</ram:URIID>', $xml);
+        self::assertSame(3, substr_count($xml, '<ram:TypeCode>916</ram:TypeCode>'));
+
+        // The ZUGFeRD profile EN 16931 carries them, too.
+        $invoice = (new InvoiceNormalizer())->normalize($data);
+        self::assertStringContainsString('<ram:ShipToTradeParty>', (new EInvoiceBuilder())->toXml($invoice, ZugferdProfiles::PROFILE_EN16931));
+    }
+
     public function testZugferdXmlIsCheckedAgainstTheSchema(): void
     {
         $invoice = (new InvoiceNormalizer())->normalize(InvoiceNormalizerTest::example());

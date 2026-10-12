@@ -124,6 +124,10 @@ final class EInvoiceReader
             );
         }
         $adjustments = $this->adjustments($this->nodes('ram:SpecifiedTradeAllowanceCharge', $settlement), self::CII_ADJUSTMENT, true);
+        $delivery = $this->node('rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeDelivery', $root);
+        $shipTo = $this->node('ram:ShipToTradeParty', $delivery);
+        $shipToAddress = $this->node('ram:PostalTradeAddress', $shipTo);
+        $globalId = $this->node('ram:GlobalID', $shipTo);
 
         return $this->invoice([
             'syntax' => 'CII',
@@ -140,6 +144,7 @@ final class EInvoiceReader
             ),
             'buyer_reference' => $this->text('ram:BuyerReference', $agreement),
             'order_reference' => $this->text('ram:BuyerOrderReferencedDocument/ram:IssuerAssignedID', $agreement),
+            'despatch_reference' => $this->text('ram:DespatchAdviceReferencedDocument/ram:IssuerAssignedID', $delivery),
             'preceding_invoice' => $this->precedingInvoice(
                 $this->text('ram:InvoiceReferencedDocument/ram:IssuerAssignedID', $settlement),
                 $this->ciiDate('ram:InvoiceReferencedDocument/ram:FormattedIssueDateTime/qdt:DateTimeString', $settlement),
@@ -149,6 +154,17 @@ final class EInvoiceReader
             'note' => $this->joined('ram:IncludedNote/ram:Content', $header),
             'seller' => $seller,
             'buyer' => $this->ciiParty($this->node('ram:BuyerTradeParty', $agreement)),
+            'delivery' => $shipTo === null ? null : $this->delivery(
+                $this->text('ram:Name', $shipTo),
+                $shipToAddress === null ? null : [
+                    $this->text('ram:LineOne', $shipToAddress),
+                    $this->text('ram:LineTwo', $shipToAddress),
+                    $this->text('ram:PostcodeCode', $shipToAddress),
+                    $this->text('ram:CityName', $shipToAddress),
+                    $this->text('ram:CountryID', $shipToAddress),
+                ],
+                $globalId ?? $this->node('ram:ID', $shipTo),
+            ),
             'bank' => $this->bank(
                 $meansCode,
                 $this->text('ram:PayeePartyCreditorFinancialAccount/ram:IBANID', $means),
@@ -165,6 +181,12 @@ final class EInvoiceReader
             'allowances' => $adjustments['allowances'],
             'charges' => $adjustments['charges'],
             'tax_groups' => $taxGroups,
+            'attachments' => array_map(fn (DOMNode $document): array => $this->attachment(
+                $this->text('ram:IssuerAssignedID', $document),
+                $this->text('ram:Name', $document),
+                $this->text('ram:URIID', $document),
+                $this->node('ram:AttachmentBinaryObject', $document),
+            ), $this->nodes("ram:AdditionalReferencedDocument[ram:TypeCode='916']", $agreement)),
             'totals' => $this->totals(
                 $this->text('ram:LineTotalAmount', $sum),
                 $this->text('ram:AllowanceTotalAmount', $sum),
@@ -260,6 +282,7 @@ final class EInvoiceReader
             ),
             'buyer_reference' => $this->text('cbc:BuyerReference', $root),
             'order_reference' => $this->text('cac:OrderReference/cbc:ID', $root),
+            'despatch_reference' => $this->text('cac:DespatchDocumentReference/cbc:ID', $root),
             'preceding_invoice' => $this->precedingInvoice(
                 $this->text('cac:BillingReference/cac:InvoiceDocumentReference/cbc:ID', $root),
                 $this->text('cac:BillingReference/cac:InvoiceDocumentReference/cbc:IssueDate', $root),
@@ -269,6 +292,7 @@ final class EInvoiceReader
             'note' => $this->joined('cbc:Note', $root),
             'seller' => $seller,
             'buyer' => $this->ublParty($this->node('cac:AccountingCustomerParty/cac:Party', $root)),
+            'delivery' => $this->ublDelivery($this->node('cac:Delivery', $root)),
             'bank' => $this->bank(
                 $meansCode,
                 $this->text('cac:PayeeFinancialAccount/cbc:ID', $means),
@@ -286,6 +310,13 @@ final class EInvoiceReader
             'allowances' => $adjustments['allowances'],
             'charges' => $adjustments['charges'],
             'tax_groups' => $taxGroups,
+            // Code 130 marks the invoiced object identifier (BT-18), not a supporting document.
+            'attachments' => array_map(fn (DOMNode $document): array => $this->attachment(
+                $this->text('cbc:ID', $document),
+                $this->text('cbc:DocumentDescription', $document),
+                $this->text('cac:Attachment/cac:ExternalReference/cbc:URI', $document),
+                $this->node('cac:Attachment/cbc:EmbeddedDocumentBinaryObject', $document),
+            ), $this->nodes("cac:AdditionalDocumentReference[not(cbc:DocumentTypeCode='130')]", $root)),
             'totals' => $this->totals(
                 $this->text('cbc:LineExtensionAmount', $sum),
                 $this->text('cbc:AllowanceTotalAmount', $sum),
@@ -317,6 +348,56 @@ final class EInvoiceReader
             $this->text('cbc:Name', $contact),
             $this->node('cbc:EndpointID', $party),
         );
+    }
+
+    /** BG-13 in UBL: the name, location ID and address of a delivery, or null if it names none of them. */
+    private function ublDelivery(?DOMNode $delivery): ?array
+    {
+        $name = $this->text('cac:DeliveryParty/cac:PartyName/cbc:Name', $delivery);
+        $address = $this->node('cac:DeliveryLocation/cac:Address', $delivery);
+        $location = $this->node('cac:DeliveryLocation/cbc:ID', $delivery);
+        if ($name === null && $address === null && $location === null) {
+            return null;
+        }
+        return $this->delivery(
+            $name,
+            $address === null ? null : [
+                $this->text('cbc:StreetName', $address),
+                $this->text('cbc:AdditionalStreetName', $address),
+                $this->text('cbc:PostalZone', $address),
+                $this->text('cbc:CityName', $address),
+                $this->text('cac:Country/cbc:IdentificationCode', $address),
+            ],
+            $location,
+        );
+    }
+
+    /** @param ?list<?string> $address street, additional, zip, city, country */
+    private function delivery(?string $name, ?array $address, ?DOMNode $location): array
+    {
+        $scheme = $location instanceof \DOMElement ? $location->getAttribute('schemeID') : '';
+        $id = trim((string) $location?->textContent);
+        return [
+            'name' => $name,
+            'address' => $address === null ? null : array_combine(['street', 'additional', 'zip', 'city', 'country'], $address),
+            'location_id' => $id !== '' ? ['scheme' => $scheme !== '' ? $scheme : null, 'id' => $id] : null,
+        ];
+    }
+
+    /** BG-24; content holds the decoded file, which comes from outside: never use its filename as a path unchecked. */
+    private function attachment(?string $id, ?string $description, ?string $url, ?DOMNode $binary): array
+    {
+        $content = $binary === null ? false : base64_decode(preg_replace('/\s+/', '', $binary->textContent) ?? '', true);
+        $element = $binary instanceof \DOMElement ? $binary : null;
+        return [
+            'id' => $id,
+            'description' => $description,
+            'filename' => $element?->getAttribute('filename') ?: null,
+            'mime' => $element?->getAttribute('mimeCode') ?: null,
+            'size' => $content !== false ? strlen($content) : null,
+            'url' => $url,
+            'content' => $content !== false && $content !== '' ? $content : null,
+        ];
     }
 
     private function invoice(array $invoice): array

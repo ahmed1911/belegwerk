@@ -25,6 +25,26 @@ final class InvoiceNormalizerTest extends TestCase
         return $data;
     }
 
+    public const PDF = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
+    public const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+    /** A deliver-to party, a despatch advice number and three supporting documents: a PDF, an image and a link. */
+    public static function withDeliveryAndAttachments(array $data): array
+    {
+        $data['despatch_reference'] = 'LS-1234';
+        $data['delivery'] = [
+            'name' => 'Stadtverwaltung Beispielstadt, Bauhof',
+            'address' => ['street' => 'Industriestraße 9', 'zip' => '10117', 'city' => 'Berlin'],
+            'location_id' => ['scheme' => '0088', 'id' => '4012345000009'],
+        ];
+        $data['attachments'] = [
+            ['filename' => 'stundenzettel-2026-09.pdf', 'content' => self::PDF, 'description' => 'Stundenzettel September'],
+            ['filename' => 'C:\\Belege\\Lieferschein', 'content' => base64_decode(self::PNG), 'description' => 'Lieferschein', 'id' => 'LS-1234'],
+            ['url' => 'https://kunde.example/abnahme/77', 'description' => 'Abnahmeprotokoll', 'id' => 'ABN-77'],
+        ];
+        return $data;
+    }
+
     /** Sets every item to rate 0 and the given VAT category. */
     public static function zeroRated(array $data, string $category): array
     {
@@ -256,6 +276,63 @@ final class InvoiceNormalizerTest extends TestCase
         unset($data['buyer_reference']);
 
         $this->expectException(ValidationException::class);
+        $normalizer->assertXRechnung($normalizer->normalize($data));
+    }
+
+    public function testNormalizesDeliveryAndAttachments(): void
+    {
+        $invoice = (new InvoiceNormalizer())->normalize(self::withDeliveryAndAttachments(self::example()));
+
+        self::assertSame('LS-1234', $invoice['despatch_reference']);
+        self::assertSame([
+            'name' => 'Stadtverwaltung Beispielstadt, Bauhof',
+            'address' => ['street' => 'Industriestraße 9', 'additional' => null, 'zip' => '10117', 'city' => 'Berlin', 'country' => 'DE'],
+            'location_id' => ['scheme' => '0088', 'id' => '4012345000009'],
+        ], $invoice['delivery']);
+
+        [$timesheet, $deliveryNote, $link] = $invoice['attachments'];
+        self::assertSame(
+            ['stundenzettel-2026-09', 'Stundenzettel September', 'stundenzettel-2026-09.pdf', 'application/pdf', strlen(self::PDF), null],
+            [$timesheet['id'], $timesheet['description'], $timesheet['filename'], $timesheet['mime'], $timesheet['size'], $timesheet['url']],
+        );
+        self::assertSame(['LS-1234', 'Lieferschein.png', 'image/png'], [$deliveryNote['id'], $deliveryNote['filename'], $deliveryNote['mime']], 'path removed, extension from the type');
+        self::assertSame(['ABN-77', null, null, 'https://kunde.example/abnahme/77'], [$link['id'], $link['filename'], $link['content'], $link['url']]);
+
+        $withoutDelivery = (new InvoiceNormalizer())->normalize(self::example());
+        self::assertSame([null, null, []], [$withoutDelivery['delivery'], $withoutDelivery['despatch_reference'], $withoutDelivery['attachments']]);
+    }
+
+    public function testRejectsInvalidDeliveryAndAttachments(): void
+    {
+        $data = self::example();
+        $data['delivery'] = ['location_id' => ['scheme' => 'GLN', 'id' => '4012345000009'], 'address' => ['zip' => '10117']];
+        $data['attachments'] = [
+            ['filename' => 'logo.gif', 'content' => "GIF89a\x01\x00\x01\x00\x00\x00\x00;"],
+            ['filename' => 'a.pdf', 'content' => self::PDF],
+            ['filename' => 'A.PDF', 'content' => self::PDF],
+            ['description' => 'Weder Datei noch Link'],
+            ['url' => 'https://kunde.example/x'],
+        ];
+
+        $errors = self::errors($data);
+        self::assertSame(
+            ['delivery.location_id', 'delivery.address.city', 'attachments.0.content', 'attachments.2.filename', 'attachments.3.content', 'attachments.3.id', 'attachments.4.id'],
+            array_keys($errors),
+        );
+        self::assertStringContainsString('image/gif', $errors['attachments.0.content']);
+
+        $data = self::example();
+        $data['delivery'] = [];
+        self::assertSame(['delivery'], array_keys(self::errors($data)));
+    }
+
+    public function testXRechnungRequiresTheZipOfTheDeliveryAddress(): void
+    {
+        $normalizer = new InvoiceNormalizer();
+        $data = self::example();
+        $data['delivery'] = ['address' => ['city' => 'Berlin']];
+
+        $this->expectExceptionMessage('delivery.address.zip: Required for XRechnung.');
         $normalizer->assertXRechnung($normalizer->normalize($data));
     }
 

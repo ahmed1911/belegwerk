@@ -107,6 +107,9 @@ misspelled optional keys.
 | `buyer.name`, `buyer.address.city` | yes | Street and zip are optional (zip is required for XRechnung) |
 | `buyer.email` or `buyer.electronic_address` | XRechnung | Email, or `{"scheme": "0204", "id": "<Leitweg-ID>"}` |
 | `buyer.vat_id` | for `AE`/`K` | Buyer VAT ID |
+| `delivery` | | Deliver-to party if it differs from the buyer (BG-13): optional `name`, `address` (like `buyer.address`; zip required for XRechnung), `location_id` (string, or `{"scheme": "0088", "id": "<GLN>"}`) |
+| `despatch_reference` | | Delivery note number (Lieferscheinnummer, BT-16) |
+| `attachments[]` | | Supporting documents such as timesheets or delivery notes, see below |
 | `bank.holder`, `bank.iban` | unless `direct_debit` | SEPA credit transfer; optional `bic`, `name` |
 | `direct_debit.mandate_reference`, `.creditor_id`, `.iban` | | SEPA direct debit (payment means 59) from the buyer's account instead of a transfer |
 | `cash_discount.days`, `cash_discount.percent` | | Cash discount (Skonto) on the amount due, written as `#SKONTO#TAGE=…#PROZENT=…#` (XRechnung) |
@@ -132,6 +135,22 @@ result), and an amount takes the VAT rate of the lines if they all have the same
 "charges": [{"reason": "Versand", "amount_cents": 490, "tax_rate": 19, "reason_code": "FC"}]
 ```
 
+**Attachments:** each entry is a file (`filename` and `content`, the raw bytes) or a link (`url`), with an optional
+`description` (shown in templates) and `id` (BT-122; defaults to the file name without extension, required for links).
+Files are embedded base64-encoded in the XML of XRechnung and ZUGFeRD alike (BG-24). The type is detected from the
+content; allowed are PDF, PNG, JPEG, CSV, XLSX and ODS. Directories are cut off the file name and its extension follows
+the detected type (`foto.jpg` becomes `foto.jpeg`); file names must be unique. Receiving portals limit the size of an
+e-invoice, so keep attachments small or link them.
+
+```php
+'despatch_reference' => 'LS-1234',
+'delivery' => ['name' => 'Bauhof', 'address' => ['street' => 'Industriestraße 9', 'zip' => '10117', 'city' => 'Berlin']],
+'attachments' => [
+    ['filename' => 'stundenzettel-2026-09.pdf', 'content' => file_get_contents($path), 'description' => 'Stundenzettel September'],
+    ['url' => 'https://kunde.example/abnahme/77', 'id' => 'ABN-77', 'description' => 'Abnahmeprotokoll'],
+],
+```
+
 **VAT categories:** `S` (standard, rate > 0), `Z` (zero rated), `E` (exempt), `AE` (reverse charge),
 `K` (intra-community supply), `G` (export). All but `S` require `tax_rate: 0`.
 
@@ -148,12 +167,23 @@ incoming invoices with the KoSIT validator (see [Validating e-invoices](#validat
 
 The result uses the keys of the [template context](#context) (it is not a complete context), with `null` for anything the invoice does not contain:
 `number`, `type_code`, `currency`, `date`, `due_date`, `service_date`, `period`, `buyer_reference`, `order_reference`,
-`preceding_invoice`, `payment_terms`, `cash_discount` (`days`, `percent` from `#SKONTO#`), `note`, `seller`, `buyer`
-(each with `tax_number` and `phone`), `bank` (`name` is always `null`), `direct_debit`, `lines[]`, `allowances[]`,
-`charges[]`, `tax_groups[]` and `totals`. Additionally `syntax` (`CII` or `UBL`) and `profile` (the specification
+`despatch_reference`, `preceding_invoice`, `payment_terms`, `cash_discount` (`days`, `percent` from `#SKONTO#`), `note`,
+`seller`, `buyer` (each with `tax_number` and `phone`), `delivery`, `bank` (`name` is always `null`), `direct_debit`,
+`lines[]`, `allowances[]`, `charges[]`, `tax_groups[]`, `attachments[]` and `totals`. Additionally `syntax` (`CII` or `UBL`) and `profile` (the specification
 identifier, BT-24). Lines have no `unit` label and no `subtotal_cents`; `unit_price_cents` is a float if the price has
 more than two decimals, and a price per base quantity (e.g. per 100 pieces) is converted to the price per unit.
 Currencies other than EUR are read as they are.
+
+`attachments[]` holds the supporting documents of the XML with their decoded `content` (or `null` for a link). The
+file name comes from the sender, so never use it as a path unchecked:
+
+```php
+foreach ($invoice['attachments'] as $attachment) {
+    if ($attachment['content'] !== null) {
+        file_put_contents('/ablage/' . bin2hex(random_bytes(8)) . '-' . basename((string) $attachment['filename']), $attachment['content']);
+    }
+}
+```
 
 ## Templates
 
@@ -188,7 +218,9 @@ For `invoice()` the template receives the validated and calculated invoice:
 | Variable | Content |
 | --- | --- |
 | `number`, `type_code`, `currency`, `date`, `due_date`, `service_date`, `period.start`, `period.end` | As passed in |
-| `buyer_reference`, `order_reference`, `preceding_invoice`, `payment_terms`, `note`, `tax_exemption_reason` | As passed in, or `null` |
+| `buyer_reference`, `order_reference`, `despatch_reference`, `preceding_invoice`, `payment_terms`, `note`, `tax_exemption_reason` | As passed in, or `null` |
+| `delivery` | `name`, `address`, `location_id` (`scheme`, `id`); or `null` |
+| `attachments[]` | `id`, `description`, `filename`, `mime`, `size` (bytes), `url`; without the content |
 | `seller`, `buyer`, `bank`, `direct_debit` | As passed in; IBANs without spaces; `bank` is `null` if omitted with a direct debit |
 | `cash_discount` | `days`, `percent`, calculated `date`, `amount_cents`, `payable_cents`; or `null` |
 | `lines[]` | `id`, `name`, `description`, `quantity` (up to 6 decimals), `unit`, `unit_code`, `unit_price_cents`, `subtotal_cents` (quantity × price), `allowances[]`, `charges[]`, `net_cents`, `tax_category`, `tax_rate`, `custom` |

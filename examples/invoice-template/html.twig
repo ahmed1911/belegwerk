@@ -54,6 +54,7 @@
         .payment-info { margin-top: 8mm; break-inside: avoid; page-break-inside: avoid; overflow-wrap: anywhere; }
         .payment-qr { display: flex; align-items: center; gap: 4mm; }
         .payment-qr img { width: 20mm; height: 20mm; flex: none; }
+        .attachments { margin-top: 5mm; font-size: 9pt; break-inside: avoid; overflow-wrap: anywhere; }
         .tax-note { margin: 3mm 0 0; font-size: 9pt; overflow-wrap: anywhere; }
     </style>
 </head>
@@ -92,7 +93,14 @@
         <div class="fact fact-stacked"><strong>Rechnungsnummer:</strong><span>{{ number }}</span></div>
         {% if custom.project %}<div class="fact"><strong>Kostenstelle/Projekt:</strong><span>{{ custom.project }}</span></div>{% endif %}
         {% if buyer_reference %}<div class="fact"><strong>Ihre Referenz:</strong><span>{{ buyer_reference }}</span></div>{% endif %}
+        {% if despatch_reference %}<div class="fact"><strong>Lieferschein:</strong><span>{{ despatch_reference }}</span></div>{% endif %}
         {% if custom.orderer %}<div class="fact fact-wide"><strong>Besteller:</strong><span>{{ custom.orderer }}</span></div>{% endif %}
+        {% if delivery %}
+            <div class="fact fact-stacked"><strong>Lieferanschrift:</strong><span>
+                {%- for part in [delivery.name, delivery.address.street|default, delivery.address.additional|default] %}{% if part %}{{ part }}<br>{% endif %}{% endfor -%}
+                {%- if delivery.address %}{{ delivery.address.zip }} {{ delivery.address.city }}{% if delivery.address.country != 'DE' %}<br>{{ delivery.address.country }}{% endif %}{% endif -%}
+            </span></div>
+        {% endif %}
     </section>
 
     {% if note %}<p class="intro">{{ note|nl2br }}</p>{% endif %}
@@ -144,6 +152,13 @@
     <section class="payment-info{% if payment_qr %} payment-qr{% endif %}">
         {% if payment_qr %}<img src="{{ payment_qr }}" alt="GiroCode">{% endif %}
         <span>Bitte überweisen Sie {% if totals.paid_cents > 0 %}den offenen Betrag von {{ totals.due_cents|money }}{% else %}den Gesamtbetrag{% endif %} bis zum {{ due_date|date('d.m.Y') }} auf das unten genannte Konto von {{ bank.holder }}.{% if payment_qr %} Oder scannen Sie den Code mit Ihrer Banking-App.{% endif %}</span>
+    </section>
+    {% endif %}
+
+    {% if attachments %}
+    <section class="attachments">
+        <strong>Anlagen:</strong>
+        {% for attachment in attachments %}{{ attachment.description ?: attachment.filename ?: attachment.id }}{% if not loop.last %}, {% endif %}{% endfor %}
     </section>
     {% endif %}
 </body>

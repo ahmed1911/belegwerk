@@ -39,6 +39,22 @@ final class EInvoiceReaderTest extends TestCase
         self::assertSame($expected['lines'][1]['charges'], $invoice['lines'][1]['charges']);
     }
 
+    public function testReadsBackDeliveryAndAttachments(): void
+    {
+        $data = InvoiceNormalizerTest::withDeliveryAndAttachments(InvoiceNormalizerTest::example());
+        $expected = (new InvoiceNormalizer())->normalize($data);
+
+        $invoice = $this->belegwerk()->read($this->belegwerk()->xrechnung($data));
+
+        self::assertSame($expected['delivery'], $invoice['delivery']);
+        self::assertSame('LS-1234', $invoice['despatch_reference']);
+        self::assertSame($expected['attachments'], $invoice['attachments']);
+        self::assertSame(InvoiceNormalizerTest::PDF, $invoice['attachments'][0]['content']);
+
+        $plain = $this->belegwerk()->read($this->belegwerk()->xrechnung(InvoiceNormalizerTest::example()));
+        self::assertSame([null, null, []], [$plain['delivery'], $plain['despatch_reference'], $plain['attachments']]);
+    }
+
     public function testReadsDirectDebitAndCreditNoteReference(): void
     {
         $data = InvoiceNormalizerTest::example();
@@ -68,6 +84,18 @@ final class EInvoiceReaderTest extends TestCase
         self::assertSame(['DE987654321', 'Max Muster', '+49 40 123456'], [$invoice['seller']['vat_id'], $invoice['seller']['contact_name'], $invoice['seller']['phone']]);
         self::assertSame(['street' => 'Hauptstraße 1', 'additional' => 'Hinterhaus', 'zip' => '80331', 'city' => 'München', 'country' => 'DE'], $invoice['buyer']['address']);
         self::assertSame(['holder' => 'Bürobedarf Lieferant GmbH', 'iban' => 'DE02120300000000202051', 'bic' => 'BYLADEM1001', 'name' => null], $invoice['bank']);
+        self::assertSame([
+            'name' => 'Musterfirma GmbH, Lager Freising',
+            'address' => ['street' => 'Lagerstraße 3', 'additional' => null, 'zip' => '85354', 'city' => 'Freising', 'country' => 'DE'],
+            'location_id' => ['scheme' => '0088', 'id' => '4012345000009'],
+        ], $invoice['delivery']);
+        self::assertSame('LS-0815', $invoice['despatch_reference']);
+        // The invoiced object identifier (code 130) is no attachment.
+        self::assertSame(['LS-0815', 'Abnahme-12'], array_column($invoice['attachments'], 'id'));
+        self::assertSame(['Lieferschein', 'lieferschein.csv', 'text/csv', "Artikel;Menge\nKugelschreiber;500\n"], [
+            $invoice['attachments'][0]['description'], $invoice['attachments'][0]['filename'], $invoice['attachments'][0]['mime'], $invoice['attachments'][0]['content'],
+        ]);
+        self::assertSame(['https://lieferant.example/abnahme/12', null], [$invoice['attachments'][1]['url'], $invoice['attachments'][1]['content']]);
 
         // 25.00 € per 100 pieces.
         self::assertSame(['500', 25, 10000], [$invoice['lines'][0]['quantity'], $invoice['lines'][0]['unit_price_cents'], $invoice['lines'][0]['net_cents']]);

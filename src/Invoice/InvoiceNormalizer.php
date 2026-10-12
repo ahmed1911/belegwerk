@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Belegwerk\Invoice;
 
 use DateTimeImmutable;
+use finfo;
 use horstoeko\zugferd\codelistsenum\ZugferdAllowanceCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdChargeCodes;
 use horstoeko\zugferd\codelistsenum\ZugferdCountryCodes;
@@ -58,6 +59,13 @@ final class InvoiceNormalizer
         'G' => 'Steuerfreie Ausfuhrlieferung',
     ];
 
+    /** MIME types allowed for attachments (BT-125-1) with the file extension horstoeko gives them in the XML. */
+    private const ATTACHMENT_TYPES = [
+        'application/pdf' => 'pdf', 'image/png' => 'png', 'image/jpeg' => 'jpeg', 'text/csv' => 'csv',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+        'application/vnd.oasis.opendocument.spreadsheet' => 'ods',
+    ];
+
     /** @var array<string, string> */
     private array $errors = [];
 
@@ -93,18 +101,21 @@ final class InvoiceNormalizer
             'period' => $this->period($data),
             'buyer_reference' => $this->optionalString($data, 'buyer_reference'),
             'order_reference' => $this->optionalString($data, 'order_reference'),
+            'despatch_reference' => $this->optionalString($data, 'despatch_reference'),
             'preceding_invoice' => $this->precedingInvoice($data, $typeCode),
             'payment_terms' => $this->optionalString($data, 'payment_terms'),
             'note' => $this->optionalString($data, 'note'),
             'tax_exemption_reason' => $this->optionalString($data, 'tax_exemption_reason'),
             'seller' => $this->seller($data['seller'] ?? null),
             'buyer' => $this->party($data['buyer'] ?? null, 'buyer', false),
+            'delivery' => $this->delivery($data['delivery'] ?? null),
             'bank' => $bankOmitted ? null : $this->bank($data['bank'] ?? null),
             'direct_debit' => $directDebit,
             'cash_discount' => $this->cashDiscount($data['cash_discount'] ?? null),
             'lines' => $this->lines($data['items'] ?? null),
             'allowances' => $this->adjustments($data, 'allowances', '', true),
             'charges' => $this->adjustments($data, 'charges', '', true),
+            'attachments' => $this->attachments($data['attachments'] ?? []),
             'custom' => $this->custom($data),
         ];
 
@@ -140,6 +151,10 @@ final class InvoiceNormalizer
         }
         if ($invoice['buyer']['address']['zip'] === null) {
             $errors['buyer.address.zip'] = 'Required for XRechnung.';
+        }
+        // BR-DE-10/11 need the city and zip of a deliver-to address.
+        if (($invoice['delivery']['address'] ?? null) !== null && $invoice['delivery']['address']['zip'] === null) {
+            $errors['delivery.address.zip'] = 'Required for XRechnung.';
         }
         if ($errors !== []) {
             throw new ValidationException($errors);
@@ -366,6 +381,107 @@ final class InvoiceNormalizer
             'city' => $this->requiredString($data, 'city', $prefix),
             'country' => $country,
         ];
+    }
+
+    /** BG-13 deliver-to: name (BT-70), location ID (BT-71) and address (BG-15), each optional. */
+    private function delivery(mixed $data): ?array
+    {
+        if ($data === null) {
+            return null;
+        }
+        if (!is_array($data)) {
+            $this->errors['delivery'] = 'Expected an object with name, address and/or location_id.';
+            return null;
+        }
+        $location = $data['location_id'] ?? null;
+        if (is_string($location) || is_int($location)) {
+            $location = trim((string) $location) !== '' ? ['scheme' => null, 'id' => trim((string) $location)] : null;
+        } elseif (is_array($location) && is_string($location['scheme'] ?? null) && preg_match('/^\d{4}$/', $location['scheme'])
+            && is_string($location['id'] ?? null) && trim($location['id']) !== '') {
+            $location = ['scheme' => $location['scheme'], 'id' => trim($location['id'])];
+        } elseif ($location !== null) {
+            $this->errors['delivery.location_id'] = 'Expected a string or {"scheme": "0088", "id": "..."} (ISO 6523 ICD).';
+            $location = null;
+        }
+        $delivery = [
+            'name' => $this->optionalString($data, 'name', 'delivery.'),
+            'address' => isset($data['address']) ? $this->address($data['address'], 'delivery.address', false) : null,
+            'location_id' => $location,
+        ];
+        if ($delivery === ['name' => null, 'address' => null, 'location_id' => null] && !isset($this->errors['delivery.name'])) {
+            $this->errors['delivery'] = 'Expected at least one of name, address and location_id.';
+        }
+        return $delivery;
+    }
+
+    /**
+     * BG-24 supporting documents: embedded files (BT-125) and links (BT-124). The MIME type is detected from the
+     * content and the file extension follows it, as horstoeko writes it into the XML.
+     */
+    private function attachments(mixed $data): array
+    {
+        if (!is_array($data) || !array_is_list($data)) {
+            $this->errors['attachments'] = 'Expected a list.';
+            return [];
+        }
+        $attachments = [];
+        $filenames = [];
+        foreach ($data as $index => $attachment) {
+            $prefix = "attachments.{$index}.";
+            if (!is_array($attachment)) {
+                $this->errors[rtrim($prefix, '.')] = 'Expected an object with filename and content, or url.';
+                continue;
+            }
+            $url = $this->optionalString($attachment, 'url', $prefix);
+            $content = $attachment['content'] ?? null;
+            if ($content !== null && (!is_string($content) || $content === '')) {
+                $this->errors[$prefix . 'content'] = 'Expected the file content as a non-empty string.';
+                $content = null;
+            }
+            if ($content === null && $url === null && !isset($this->errors[$prefix . 'content'])) {
+                $this->errors[$prefix . 'content'] = 'Required unless url is given.';
+            }
+            $filename = $content !== null ? $this->requiredString($attachment, 'filename', $prefix) : null;
+            $mime = null;
+            if ($filename !== null) {
+                // Only the name reaches the XML; a path would leak the sender's directories.
+                $filename = basename(str_replace('\\', '/', $filename));
+                [$filename, $mime] = $this->attachmentType($content, $filename, $prefix);
+                if ($mime !== null && in_array(strtolower($filename), $filenames, true)) {
+                    $this->errors[$prefix . 'filename'] = 'File names must be unique (BR-DE-22).';
+                }
+                $filenames[] = strtolower($filename);
+            }
+            $id = $this->optionalString($attachment, 'id', $prefix)
+                ?? ($filename !== null ? pathinfo($filename, PATHINFO_FILENAME) : null);
+            if ($id === null && !isset($this->errors[$prefix . 'id'])) {
+                $this->errors[$prefix . 'id'] = 'Required for a link without file.';
+            }
+            $attachments[] = [
+                'id' => $id,
+                'description' => $this->optionalString($attachment, 'description', $prefix),
+                'filename' => $filename,
+                'mime' => $mime,
+                'size' => $content !== null ? strlen($content) : null,
+                'url' => $url,
+                'content' => $content,
+            ];
+        }
+        return $attachments;
+    }
+
+    /** @return array{string, ?string} the file name with the extension of the detected type, and the type */
+    private function attachmentType(string $content, string $filename, string $prefix): array
+    {
+        $mime = (new finfo())->buffer($content, FILEINFO_MIME_TYPE);
+        if ($mime === 'text/plain' && strtolower(pathinfo($filename, PATHINFO_EXTENSION)) === 'csv') {
+            $mime = 'text/csv';
+        }
+        if (!isset(self::ATTACHMENT_TYPES[$mime])) {
+            $this->errors[$prefix . 'content'] = "File type {$mime} is not allowed in e-invoices; allowed are PDF, PNG, JPEG, CSV, XLSX and ODS.";
+            return [$filename, null];
+        }
+        return [pathinfo($filename, PATHINFO_FILENAME) . '.' . self::ATTACHMENT_TYPES[$mime], $mime];
     }
 
     private function bank(mixed $data): array

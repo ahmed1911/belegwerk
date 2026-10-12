@@ -7,8 +7,10 @@
     "require": {
         "php": ">=8.2",
         "ext-curl": "*",
+        "ext-fileinfo": "*",
         "bacon/bacon-qr-code": "^3.0",
-        "horstoeko/zugferd": "^1.0.116",
+        "horstoeko/mimedb": "^1.0.2",
+        "horstoeko/zugferd": "^1.0.131",
         "symfony/validator": "^6.4 || ^7.0 || ^8.0",
         "twig/twig": "^3.29"
     },

@@ -36,6 +36,8 @@ use Twig\TwigFilter;
  *     contact_name?: string,
  *     electronic_address?: string|array{scheme: string, id: string},
  * }
+ * @phpstan-type Delivery array{name?: string, address?: Address, location_id?: string|array{scheme: string, id: string}}
+ * @phpstan-type Attachment array{filename?: string, content?: string, url?: string, description?: string, id?: string}
  * @phpstan-type Adjustment array{reason: string, amount_cents?: int, percent?: int|float|numeric-string, reason_code?: string}
  * @phpstan-type InvoiceAdjustment array{
  *     reason: string,
@@ -63,6 +65,7 @@ use Twig\TwigFilter;
  *     date: string,
  *     due_date: string,
  *     buyer: Party,
+ *     delivery?: Delivery,
  *     items: non-empty-list<Item>,
  *     seller?: Party,
  *     bank?: array{holder: string, iban: string, bic?: string, name?: string},
@@ -73,6 +76,7 @@ use Twig\TwigFilter;
  *     period?: array{start: string, end: string},
  *     buyer_reference?: string,
  *     order_reference?: string,
+ *     despatch_reference?: string,
  *     preceding_invoice?: array{number: string, date?: string},
  *     payment_terms?: string,
  *     note?: string,
@@ -81,6 +85,7 @@ use Twig\TwigFilter;
  *     paid_cents?: int,
  *     allowances?: list<InvoiceAdjustment>,
  *     charges?: list<InvoiceAdjustment>,
+ *     attachments?: list<Attachment>,
  *     custom?: array<string, mixed>,
  * }
  */
@@ -122,7 +127,11 @@ final class Belegwerk
         $invoice = $this->normalized($invoice);
         $xml = $this->builder->toXml($invoice, ZugferdProfiles::PROFILE_EN16931);
 
-        $context = $invoice + ['payment_qr' => PaymentQrCode::dataUri($invoice)];
+        // Attachment contents go into the XML only; templates list the attachments.
+        $context = ['attachments' => array_map(
+            static fn (array $attachment): array => array_diff_key($attachment, ['content' => true]),
+            $invoice['attachments'],
+        )] + $invoice + ['payment_qr' => PaymentQrCode::dataUri($invoice)];
 
         return (new ZugferdDocumentPdfMerger($xml, $this->render($template, $context)))
             ->setAdditionalCreatorTool('belegwerk')

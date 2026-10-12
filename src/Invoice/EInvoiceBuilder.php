@@ -87,6 +87,32 @@ final class EInvoiceBuilder
             $document->setDocumentBuyerContact($buyer['contact_name'], null, null, null, null);
         }
 
+        $delivery = $invoice['delivery'];
+        if ($delivery !== null) {
+            $location = $delivery['location_id'];
+            $document->setDocumentShipTo($delivery['name'], $location !== null && $location['scheme'] === null ? $location['id'] : null);
+            if ($location !== null && $location['scheme'] !== null) {
+                $document->addDocumentShipToGlobalId($location['id'], $location['scheme']);
+            }
+            if ($delivery['address'] !== null) {
+                $document->setDocumentShipToAddress(...self::address($delivery['address']));
+            }
+        }
+        if ($invoice['despatch_reference'] !== null) {
+            $document->setDocumentDespatchAdviceReferencedDocument($invoice['despatch_reference']);
+        }
+        foreach ($invoice['attachments'] as $attachment) {
+            // 916: supporting document (BG-24); horstoeko detects the MIME type from the content again.
+            $document->addDocumentAdditionalReferencedDocument(
+                $attachment['id'],
+                '916',
+                $attachment['url'],
+                $attachment['description'],
+                binaryDataFilename: $attachment['filename'],
+                base64EncodedData: $attachment['content'] !== null ? base64_encode($attachment['content']) : null,
+            );
+        }
+
         $directDebit = $invoice['direct_debit'];
         if ($directDebit !== null) {
             $document->addDocumentPaymentMeanToDirectDebit($directDebit['iban'], $directDebit['creditor_id']);
