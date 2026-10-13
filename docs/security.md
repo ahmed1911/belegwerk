@@ -31,6 +31,8 @@ What the Twig sandbox guarantees:
 - `include` only loads `partials/<name>.twig` from the template itself. A partial name must match
   `partials/[a-zA-Z0-9_-]+.twig`, so paths like `../x` cannot be registered. Partials and sources are held in
   memory, belegwerk reads no other files while rendering.
+- An include needs a fixed name and must not form a cycle, checked before rendering. An endless include would
+  otherwise exhaust PHP's memory with a fatal error that no `catch` stops.
 - The `asset` filter only returns the template's own assets as `data:` URIs. Asset names are plain file names with one
   of the supported extensions. An unknown name throws an error.
 - Template `defaults.json` reach the template only, never the e-invoice XML.

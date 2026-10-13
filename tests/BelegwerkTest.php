@@ -145,6 +145,38 @@ final class BelegwerkTest extends TestCase
         ));
     }
 
+    public function testPartialsMayIncludeOtherPartials(): void
+    {
+        $template = new Template(
+            '<p>{% include "partials/outer.twig" %}{% include "partials/inner.twig" %}</p>',
+            partials: ['partials/outer.twig' => '{% include "partials/inner.twig" %}', 'partials/inner.twig' => 'Inner'],
+        );
+
+        $this->expectException(GotenbergException::class);
+        $this->expectExceptionMessage('Gotenberg is not reachable');
+        (new Belegwerk('http://127.0.0.1:9'))->document($template);
+    }
+
+    public static function recursiveIncludes(): array
+    {
+        return [
+            'page includes itself' => ['{% include "index.html" %}', []],
+            'dynamic name' => ['{% include "partials/" ~ name ~ ".twig" %}', ['partials/a.twig' => 'A']],
+            'partial includes itself' => ['{% include "partials/a.twig" %}', ['partials/a.twig' => '{% include "partials/a.twig" %}']],
+            'cycle in a branch not taken' => ['{% include "partials/a.twig" %}', [
+                'partials/a.twig' => '{% include "partials/b.twig" %}',
+                'partials/b.twig' => '{% if false %}{% include "partials/a.twig" %}{% endif %}',
+            ]],
+        ];
+    }
+
+    #[DataProvider('recursiveIncludes')]
+    public function testIncludesCannotRecurse(string $html, array $partials): void
+    {
+        $this->expectException(SecurityError::class);
+        (new Belegwerk('http://127.0.0.1:9'))->document(new Template($html, partials: $partials), ['name' => 'a']);
+    }
+
     public function testTemplateRejectsUnknownVariables(): void
     {
         $this->expectException(RuntimeError::class);

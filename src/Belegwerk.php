@@ -13,7 +13,11 @@ use horstoeko\zugferd\ZugferdDocumentPdfMerger;
 use horstoeko\zugferd\ZugferdProfiles;
 use Twig\Environment;
 use Twig\Loader\ArrayLoader;
+use Twig\Node\Expression\ConstantExpression;
+use Twig\Node\IncludeNode;
+use Twig\Node\Node;
 use Twig\Sandbox\Sandbox;
+use Twig\Sandbox\SecurityError;
 use Twig\Sandbox\SecurityPolicy;
 use Twig\TwigFilter;
 
@@ -207,6 +211,7 @@ final class Belegwerk
         $policy = new SecurityPolicy(self::ALLOWED_TAGS, self::ALLOWED_FILTERS);
         $policy->setStrict(true);
         $sandbox = new Sandbox($twig, $policy);
+        self::assertNoIncludeCycle($twig, array_keys($sources + $template->partials));
 
         $files = [];
         foreach (array_keys($sources) as $name) {
@@ -214,5 +219,57 @@ final class Belegwerk
         }
 
         return $this->gotenberg->convertHtml($files);
+    }
+
+    /**
+     * An endless include exhausts memory with a fatal error that no caller can catch, so includes need a fixed
+     * partials/ name and must not form a cycle. Checked before rendering, also for branches that are not taken.
+     */
+    private static function assertNoIncludeCycle(Environment $twig, array $names): void
+    {
+        $includes = [];
+        foreach ($names as $name) {
+            $source = $twig->getLoader()->getSourceContext($name);
+            foreach (self::includeNodes($twig->parse($twig->tokenize($source))) as $include) {
+                $target = $include->getNode('expr');
+                $partial = $target instanceof ConstantExpression ? $target->getAttribute('value') : null;
+                if (!is_string($partial) || !str_starts_with($partial, 'partials/')) {
+                    throw new SecurityError('An include like "partials/styles.twig" needs a fixed partial name.', $include->getTemplateLine(), $source);
+                }
+                $includes[$name][$partial] = [$include->getTemplateLine(), $source];
+            }
+        }
+
+        $open = [];
+        $done = [];
+        $visit = static function (string $name) use (&$visit, &$open, &$done, $includes): void {
+            $open[$name] = true;
+            foreach ($includes[$name] ?? [] as $partial => [$line, $source]) {
+                if (isset($open[$partial])) {
+                    throw new SecurityError("Partials must not include themselves; this include of \"{$partial}\" closes a cycle.", $line, $source);
+                }
+                if (!isset($done[$partial])) {
+                    $visit($partial);
+                }
+            }
+            unset($open[$name]);
+            $done[$name] = true;
+        };
+        foreach ($names as $name) {
+            if (!isset($done[$name])) {
+                $visit($name);
+            }
+        }
+    }
+
+    /** @return iterable<IncludeNode> */
+    private static function includeNodes(Node $node): iterable
+    {
+        foreach ($node as $child) {
+            if ($child instanceof IncludeNode) {
+                yield $child;
+            }
+            yield from self::includeNodes($child);
+        }
     }
 }

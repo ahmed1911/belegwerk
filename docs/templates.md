@@ -27,6 +27,9 @@ templates/invoice/
 - Without `html.twig` it throws an `InvalidArgumentException`. Other files in the directory are ignored.
 - Partials: only `partials/<name>.twig` directly in that folder; the name may contain letters, digits, `_` and `-`.
   A template can include only the partials supplied with it; an unknown one throws a `Twig\Error\LoaderError`.
+  `include` needs a fixed name such as `'partials/styles.twig'`. Partials may include other partials, but not
+  themselves, directly or indirectly. Both are checked before rendering, also in branches that are not taken, and
+  throw a `Twig\Sandbox\SecurityError`.
 - Assets: every file directly in `assets/`; subfolders and dotfiles are skipped. A file with an unsupported type
   throws an `InvalidArgumentException`, so keep other files out of the folder. See [Fonts and images](#fonts-and-images).
 - `defaults.json` must contain a JSON object. Invalid JSON or a list throws an `InvalidArgumentException`.
@@ -196,7 +199,8 @@ Output is HTML-escaped automatically. Use `nl2br` for multi-line text; it escape
 
 Templates run in Twig's sandbox with a strict policy:
 
-- **Tags:** `if` (with `elseif`, `else`), `for`, `set`, `include`
+- **Tags:** `if` (with `elseif`, `else`), `for`, `set`, `include` (partials only, see
+  [Directory layout](#directory-layout))
 - **Filters:** `escape`/`e`, `raw`, `upper`, `lower`, `capitalize`, `title`, `trim`, `nl2br`, `striptags`, `replace`,
   `format`, `number_format`, `round`, `abs`, `date`, `default`, `length`, `first`, `last`, `join`, `split`, `slice`,
   `keys`, `merge`, `batch`, `column`, `money`, `asset`
