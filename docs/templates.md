@@ -25,28 +25,17 @@ templates/invoice/
 ```
 
 - Without `html.twig` it throws an `InvalidArgumentException`. Other files in the directory are ignored.
-- Partials: only `partials/<name>.twig` directly in that folder; the name may contain letters, digits, `_` and `-`.
-  A template can include only the partials supplied with it; an unknown one throws a `Twig\Error\LoaderError`.
-  `include` needs a fixed name such as `'partials/styles.twig'`. Partials may include other partials, but not
-  themselves, directly or indirectly. Both are checked before rendering, also in branches that are not taken, and
-  throw a `Twig\Sandbox\SecurityError`.
+- Partials: only `partials/<name>.twig` directly in that folder, the name of letters, digits, `_` and `-`. `include`
+  takes a fixed name such as `'partials/styles.twig'` and finds only the partials supplied with the template; an
+  unknown one throws a `Twig\Error\LoaderError`. Partials may include other partials, but not themselves, directly or
+  indirectly. A dynamic name or a cycle throws a `Twig\Sandbox\SecurityError` before rendering, also in branches that
+  are not taken.
 - Assets: every file directly in `assets/`; subfolders and dotfiles are skipped. A file with an unsupported type
   throws an `InvalidArgumentException`, so keep other files out of the folder. See [Fonts and images](#fonts-and-images).
-- `defaults.json` must contain a JSON object. Invalid JSON or a list throws an `InvalidArgumentException`.
-  See [Template defaults](#template-defaults).
+- `defaults.json` must contain a JSON object, otherwise it throws an `InvalidArgumentException`.
 
-For templates stored in a database, pass the same parts to the constructor. The keys are the file paths as above:
-
-```php
-new Template(
-    html: $html,
-    header: $header,
-    footer: $footer,
-    partials: ['partials/styles.twig' => $styles],
-    assets: ['logo.png' => $bytes],
-    defaults: ['custom' => ['project' => null]],
-);
-```
+For templates stored in a database, pass the same parts to the [constructor](api.md#template), keyed by the file paths
+above.
 
 ## Header and footer
 
@@ -63,8 +52,7 @@ new Template(
 ## Context
 
 Templates run with strict variables: an undefined variable or key throws a `Twig\Error\RuntimeError` instead of
-printing nothing, so a typo like `{{ seler.name }}` cannot slip onto an invoice. A tag, filter or function outside the
-[allowed list](#what-templates-may-use) throws a `Twig\Sandbox\SecurityError` before anything is rendered.
+printing nothing, so a typo like `{{ seler.name }}` cannot slip onto an invoice.
 
 ### invoice()
 
@@ -109,10 +97,10 @@ Strings are trimmed; empty strings become `null`.
 | `paid_cents` | Already paid, `0` if not given |
 | `due_cents` | `gross_cents` minus `paid_cents` |
 
-`tax_groups[].exemption_reason` is `null` for categories `S` and `Z`. For the others it is `tax_exemption_reason` or,
-for `AE`, `K` and `G`, a German default text. `attachments[].filename` carries the extension of the detected file type;
-`filename`, `mime` and `size` are `null` for a link without file. `payment_qr` is `null` with a direct debit and when
-`totals.due_cents` is zero or negative. The QR code encodes the amount due, so it ignores a cash discount.
+- `tax_groups[].exemption_reason`: see [VAT categories](invoice-data.md#vat-categories).
+- `attachments[].filename` carries the extension of the detected file type; `filename`, `mime` and `size` are `null`
+  for a link.
+- `payment_qr` is `null` with a direct debit and when nothing is due. It encodes the amount due without cash discount.
 
 #### Party
 
@@ -153,8 +141,7 @@ invoice fields and no `payment_qr`.
 ## Template defaults
 
 Template defaults fill in optional data, so the template works whether or not a field is set. They come from
-`defaults.json` or the `defaults:` constructor argument and have the lowest priority: the `defaults` of `Belegwerk`
-and the data of the call override them. Merge order and rules (`null`, empty arrays, lists) are in
+`defaults.json` or the `defaults:` constructor argument and have the lowest priority; merge rules are in
 [api.md](api.md#defaults).
 
 ```json
@@ -168,10 +155,9 @@ and the data of the call override them. Merge order and rules (`null`, empty arr
   { "custom": { "time_range": null }, "line": { "custom": { "time_range": null } } }
   ```
 
-- Template defaults only reach the template. They never change the e-invoice XML, so a user-supplied template cannot
-  alter invoice data. Every invoice field is always set in the context (`null` if empty), and that `null` overrides a
-  template default, so a default for e.g. `order_reference` never takes effect. Defaults work for `custom`,
-  `line.custom` and keys the context does not contain.
+- Template defaults never reach the e-invoice XML. Every invoice field is always set in the context, and its `null`
+  overrides a template default, so a default for e.g. `order_reference` never takes effect. Defaults work for
+  `custom`, `line.custom` and keys the context does not contain.
 
 Without defaults, read optional data with `default` or `is defined`:
 

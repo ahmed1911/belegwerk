@@ -5,10 +5,9 @@
 On every `invoice()` and `xrechnung()` call belegwerk checks:
 
 - **Input**: required fields, types, code lists (ISO 3166-1, EAS, UN/ECE Rec. 20, UNTDID 5189/7161), IBANs and the VAT
-  rules that need no Schematron engine, see [Invoice data](invoice-data.md#fields). Errors throw a
-  `ValidationException` ([Errors](api.md#errors)).
+  rules that need no Schematron engine ([Invoice data](invoice-data.md#fields)); throws a `ValidationException`.
 - **[XRechnung requirements](invoice-data.md#xrechnung-requirements)**, for `xrechnung()` only.
-- **XSD schema** of the generated XML. A violation throws a `RuntimeException`; valid input should never trigger it.
+- **XSD schema** of the generated XML; throws a `RuntimeException` ([Errors](api.md#errors)).
 
 ## What needs the KoSIT validator
 

@@ -21,10 +21,6 @@ new Belegwerk(
 
 The constructor does not contact Gotenberg. An unreachable server shows up on the first rendering call.
 
-```php
-$belegwerk = new Belegwerk('http://gotenberg:3000', defaults: ['seller' => [...], 'bank' => [...]], timeout: 30);
-```
-
 ### invoice()
 
 ```php
@@ -34,13 +30,9 @@ invoice(array $invoice, Template $template): string
 Renders a ZUGFeRD/Factur-X invoice (profile EN 16931): a PDF/A-3b with the invoice XML embedded. Returns the PDF as
 a string.
 
-The invoice fields are described in [Invoice data](invoice-data.md#fields). `defaults` are merged in first. Totals,
-tax groups and cash discount are calculated from the line items; you never pass them in. The template receives the
-validated invoice as context ([Templates: Context](templates.md#context)). It cannot change the XML, not even through
-[template defaults](templates.md#template-defaults).
-
-Invalid data throws a `ValidationException` before anything is rendered. Beyond that, `invoice()` throws
-`Twig\Error\Error` for template errors and `GotenbergException` for rendering failures; see [Errors](#errors).
+Fields: [Invoice data](invoice-data.md#fields). Totals, tax groups and cash discount are calculated; you never pass
+them in. The template receives the validated invoice ([Context](templates.md#context)) and cannot change the XML.
+Invalid data throws a `ValidationException` before anything is rendered; other failures: [Errors](#errors).
 
 ### xrechnung()
 
@@ -102,9 +94,18 @@ new Template(
 | `assets` | Images and fonts, keyed by file name such as `logo.png`, with the file content as value; see [Templates: Fonts and images](templates.md#fonts-and-images). |
 | `defaults` | Data the template brings itself, merged below the data you pass. Must be an object (string keys), not a list. See [Defaults](#defaults). |
 
-The constructor throws `InvalidArgumentException` for a partial or asset with an invalid name, an asset with an
-unsupported type and `defaults` that are a list. It does not parse the Twig sources; syntax errors surface when a
-document is rendered. Example: [Templates: Directory layout](templates.md#directory-layout).
+The constructor throws `InvalidArgumentException` for invalid partial or asset names, unsupported asset types and
+`defaults` that are a list. Twig syntax errors surface when a document is rendered.
+
+```php
+new Template(
+    html: $html,
+    footer: $footer,
+    partials: ['partials/styles.twig' => $styles],
+    assets: ['logo.png' => $bytes],
+    defaults: ['custom' => ['project' => null]],
+);
+```
 
 ### Template::fromDirectory()
 
@@ -112,10 +113,8 @@ document is rendered. Example: [Templates: Directory layout](templates.md#direct
 Template::fromDirectory(string $directory): Template
 ```
 
-Reads `html.twig`, `header.twig`, `footer.twig`, `partials/*.twig`, `assets/*` and `defaults.json` into the
-constructor parameters of the same name; see [Templates: Directory layout](templates.md#directory-layout). It throws
-`InvalidArgumentException` if `html.twig` is missing, `defaults.json` is no JSON object, or a partial or asset breaks
-the constructor's rules.
+Reads a template directory, see [Directory layout](templates.md#directory-layout). Throws `InvalidArgumentException`
+if `html.twig` is missing, `defaults.json` is no JSON object, or a partial or asset breaks the constructor's rules.
 
 ## Defaults
 

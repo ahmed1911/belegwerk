@@ -24,10 +24,9 @@ All calculations are exact in decimals, without float errors, and round half awa
 
 The template context with all calculated values is described in [Templates: Context](templates.md#context).
 
-The array shape is declared as `InvoiceData` on `Belegwerk`, so PHPStan and IDEs that read array shapes check and
-complete it. Use it for your own mapping code with `/** @phpstan-import-type InvoiceData from Belegwerk */` on the
-class and `@return InvoiceData` on the method. PHPStan reports missing required fields and wrong types, but not
-misspelled optional keys. `seller` and `bank` are optional in the type because they usually come from the defaults.
+For PHPStan and IDEs, `Belegwerk` declares the shape as `InvoiceData`: import it with
+`/** @phpstan-import-type InvoiceData from Belegwerk */`. PHPStan then reports missing required fields and wrong types,
+but not misspelled optional keys. `seller` and `bank` are optional in it, since they usually come from the defaults.
 
 ## Fields
 
@@ -264,52 +263,30 @@ exemption reason has a German default.
 
 ### Credit note and corrected invoice
 
-Amounts stay positive. `preceding_invoice` names the invoice. The date is optional, the number required. A corrected
-invoice (`384`) needs `preceding_invoice`, a credit note (`381`) does not.
+Amounts stay positive. A corrected invoice (`384`) needs `preceding_invoice`, a credit note (`381`) does not.
 
 ```json
-{
-  "type_code": "381",
-  "preceding_invoice": {"number": "RE-2026-0041", "date": "2026-03-01"}
-}
+{"type_code": "381", "preceding_invoice": {"number": "RE-2026-0041", "date": "2026-03-01"}}
 ```
 
 ```json
-{
-  "type_code": "384",
-  "preceding_invoice": {"number": "RE-2026-0041"}
-}
+{"type_code": "384", "preceding_invoice": {"number": "RE-2026-0041"}}
 ```
 
-### Partial payment
+### Partial payment, cash discount, direct debit
 
-`paid_cents` reduces the amount due. If it equals the gross amount, the invoice is paid (due 0) and the default payment
-terms say so. It must not exceed the gross amount.
+Each one on its own; with `direct_debit`, `bank` may be removed.
 
 ```json
 {"paid_cents": 50000}
 ```
 
-### Cash discount (Skonto)
-
-2 % within 14 days.
-
 ```json
 {"cash_discount": {"days": 14, "percent": 2}}
 ```
 
-### SEPA direct debit
-
-Replaces `bank` (remove it from the example, or keep it for your template). `iban` is the buyer's account.
-
 ```json
-{
-  "direct_debit": {
-    "mandate_reference": "M-7",
-    "creditor_id": "DE98ZZZ09999999999",
-    "iban": "DE02120300000000202051"
-  }
-}
+{"direct_debit": {"mandate_reference": "M-7", "creditor_id": "DE98ZZZ09999999999", "iban": "DE02120300000000202051"}}
 ```
 
 ### Discounts and shipping

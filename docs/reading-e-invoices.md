@@ -25,33 +25,22 @@ breaks business rules is read as long as it has a number (BT-1). To check incomi
 
 ## Result
 
-The keys follow the [template context](templates.md#context), but the result is not a complete context. Everything the
-invoice does not contain is `null`, lists are empty and totals `0`.
+The keys and structure are those of the [template context](templates.md#context) of `invoice()`. Everything the invoice
+does not contain is `null`, lists are empty and totals `0`. Differences:
 
-| Key | Content |
+| Key | Difference |
 | --- | --- |
-| `syntax` | `CII` or `UBL` (only in the result of `read()`) |
-| `profile` | Specification identifier (BT-24), e.g. `urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0` (only in the result of `read()`) |
-| `number`, `type_code`, `currency` | Invoice number (BT-1), type code (BT-3), currency code (BT-5) as stated |
-| `date`, `due_date`, `service_date` | `YYYY-MM-DD`. CII dates in format 102 (`YYYYMMDD`) are converted, other formats are returned as stated |
-| `period` | `{start, end}` or `null` |
-| `buyer_reference`, `order_reference`, `despatch_reference` | Strings |
-| `preceding_invoice` | `{number, date}` or `null` |
-| `payment_terms`, `note` | Strings. Several notes are joined with a blank line |
-| `cash_discount` | `{days, percent}` from the first `#SKONTO#TAGE=…#PROZENT=…#` in `payment_terms`, or `null`. `percent` is a string, there is no calculated date or amount |
-| `seller`, `buyer` | `name`, `address` (`street`, `additional`, `zip`, `city`, `country`), `vat_id`, `tax_number`, `email`, `phone`, `contact_name`, `electronic_address` (`{scheme, id}` or `null`). `contact_name` is not filled in from the name |
-| `delivery` | `{name, address, location_id}` (`location_id` is `{scheme, id}`) or `null` |
-| `bank` | `{holder, iban, bic, name}` for payment means 30 and 58 with an IBAN, otherwise `null`. `holder` is the account name or, if missing, the seller's name. `name` is always `null` |
-| `direct_debit` | `{mandate_reference, creditor_id, iban}` for payment means 49 and 59, otherwise `null` |
-| `lines[]` | See below |
-| `allowances[]`, `charges[]` | Document level: `reason`, `reason_code`, `percent`, `base_cents`, `amount_cents`, `tax_category`, `tax_rate` |
-| `tax_groups[]` | `category`, `rate`, `base_cents`, `amount_cents`, `exemption_reason` |
-| `attachments[]` | `id`, `description`, `filename`, `mime`, `size`, `url`, `content`; see [Attachments](#attachments) |
-| `totals` | `line_total_cents`, `allowance_total_cents`, `charge_total_cents`, `net_cents`, `tax_cents`, `gross_cents`, `paid_cents`, `due_cents` |
-
-Each line has `id`, `name`, `description` (the name if there is no description), `quantity`, `unit_code`,
-`unit_price_cents`, `allowances[]`, `charges[]` (each with `reason`, `reason_code`, `percent`, `base_cents`,
-`amount_cents`), `net_cents`, `tax_category` and `tax_rate`.
+| `syntax`, `profile` | Only here: `CII` or `UBL`, and the specification identifier (BT-24), e.g. `urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0` |
+| `currency` | As stated, not only `EUR` |
+| dates | CII dates in format 102 (`YYYYMMDD`) become `YYYY-MM-DD`, other formats are returned as stated |
+| `note` | Several notes are joined with a blank line |
+| `cash_discount` | `{days, percent}` from the first `#SKONTO#TAGE=…#PROZENT=…#` in `payment_terms`, no date or amounts |
+| `seller`, `buyer` | Both have `tax_number` and `phone`. `contact_name` is not filled in from the name |
+| `bank` | Only for payment means 30 and 58 with an IBAN. `holder` falls back to the seller's name, `name` is always `null` |
+| `direct_debit` | Only for payment means 49 and 59 |
+| `lines[]` | `description` falls back to the name. No `unit` label, `subtotal_cents` or `custom` |
+| `attachments[]` | Also `content`, see [Attachments](#attachments) |
+| missing | `payment_qr`, `custom`, `tax_exemption_reason` (the reason is in `tax_groups[].exemption_reason`) |
 
 Value types:
 
@@ -63,11 +52,8 @@ Value types:
   the price per unit: `25` cents for the example.
 - The tax amount (`tax_cents`, `tax_groups[]`) is the one in the invoice currency. A second amount in an accounting
   currency (BT-111) is ignored.
-- Currencies other than EUR are read as they are, and the `_cents` fields hold the smallest unit of that currency. The
-  `money` filter always appends `€`, so do not use it for them.
-
-Unlike the template context, the result has no `unit` labels, `subtotal_cents`, `custom`, `payment_qr` or
-`tax_exemption_reason` (the reason is in `tax_groups[].exemption_reason`).
+- With another currency, the `_cents` fields hold its smallest unit. The `money` filter always appends `€`, so do not
+  use it for them.
 
 ## Attachments
 

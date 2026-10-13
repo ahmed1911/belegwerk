@@ -83,15 +83,12 @@ $xml = $belegwerk->xrechnung($invoice);
 
 ## Documentation
 
-- [API reference](docs/api.md): `Belegwerk`, `Template`, defaults, exceptions
-- [Invoice data](docs/invoice-data.md): all fields, units, allowances and charges, attachments, VAT categories
-- [Templates](docs/templates.md): directory layout, header and footer, context, template defaults, formatting, what
-  templates may use, fonts and images
-- [Reading incoming e-invoices](docs/reading-e-invoices.md): supported formats, the structure `read()` returns,
-  attachments
-- [Security](docs/security.md): Gotenberg settings, what the template sandbox does and does not limit, reading
-  untrusted invoices
-- [Validating e-invoices](docs/validation.md): what belegwerk checks, the KoSIT validator, what is not supported
+- [API reference](docs/api.md): classes, defaults, exceptions
+- [Invoice data](docs/invoice-data.md): input fields, calculation, examples
+- [Templates](docs/templates.md): layout, context, sandbox rules, fonts and images
+- [Reading incoming e-invoices](docs/reading-e-invoices.md)
+- [Security](docs/security.md): Gotenberg settings, sandbox limits
+- [Validating e-invoices](docs/validation.md): KoSIT validator, unsupported cases
 
 ## License
 
