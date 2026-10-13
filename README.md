@@ -56,7 +56,6 @@ $invoice = [
     'buyer' => [
         'name' => 'Beispiel AG',
         'address' => ['street' => 'Ring 1', 'zip' => '10115', 'city' => 'Berlin'],
-        'email' => 'einkauf@beispiel.example',
     ],
     'items' => [
         ['description' => 'Beratung', 'quantity' => 2, 'unit' => 'Std', 'unit_price_cents' => 9000],
@@ -65,14 +64,22 @@ $invoice = [
 
 // ZUGFeRD: a normal-looking PDF that carries the invoice XML
 $pdf = $belegwerk->invoice($invoice, Template::fromDirectory(__DIR__ . '/templates/invoice'));
-
-// XRechnung XML for German public authorities (needs buyer_reference as well)
-$xml = $belegwerk->xrechnung($invoice + ['buyer_reference' => '04011000-12345-34']);
 ```
 
-Both calls return the file content as a string. Templates and fields are described in the pages below;
+`invoice()` returns the PDF as a string. Templates and fields are described in the pages below;
 [`examples/invoice.json`](examples/invoice.json) and [`examples/invoice-template/`](examples/invoice-template) are a
 complete example.
+
+### XRechnung
+
+German public authorities usually want a plain XRechnung XML instead of a PDF. It needs a few more fields: the
+buyer's Leitweg-ID as `buyer_reference` and the buyer's email (see [Invoice data](docs/invoice-data.md)).
+
+```php
+$invoice['buyer_reference'] = '04011000-12345-34';
+$invoice['buyer']['email'] = 'einkauf@beispiel.example';
+$xml = $belegwerk->xrechnung($invoice);
+```
 
 ## Documentation
 
