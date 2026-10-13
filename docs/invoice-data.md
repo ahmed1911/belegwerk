@@ -225,9 +225,8 @@ throws a `ValidationException` that lists every missing field. `invoice()` does 
 
 ## Examples
 
-Each snippet shows only the fields that differ from [`examples/invoice.json`](../examples/invoice.json). The test suite
-validates all of them as XRechnung with the KoSIT validator (`tests/SchematronTest.php`), see
-[Validation](validation.md#tested-with).
+Each snippet shows only the fields that differ from [`examples/invoice.json`](../examples/invoice.json). The KoSIT
+validator accepts all of them as XRechnung.
 
 ### Small business (§ 19 UStG)
 

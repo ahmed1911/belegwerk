@@ -34,18 +34,13 @@ invoice(array $invoice, Template $template): string
 Renders a ZUGFeRD/Factur-X invoice (profile EN 16931): a PDF/A-3b with the invoice XML embedded. Returns the PDF as
 a string.
 
-1. Merges `defaults` into `$invoice`, then validates and calculates it. Totals, tax groups and cash discount are
-   derived from the line items; you never pass them in.
-2. Builds the XML from the validated invoice.
-3. Renders the template with the validated invoice as context ([Templates: Context](templates.md#context)), converts
-   it to PDF and embeds the XML.
-
-The invoice fields are described in [Invoice data](invoice-data.md#fields). Invalid data throws a
-`ValidationException` before anything is rendered. Beyond that, `invoice()` throws `Twig\Error\Error` for template
-errors and `GotenbergException` for rendering failures; see [Errors](#errors).
-
-The XML is built from the invoice data only. A template cannot change it, not even through
+The invoice fields are described in [Invoice data](invoice-data.md#fields). `defaults` are merged in first. Totals,
+tax groups and cash discount are calculated from the line items; you never pass them in. The template receives the
+validated invoice as context ([Templates: Context](templates.md#context)). It cannot change the XML, not even through
 [template defaults](templates.md#template-defaults).
+
+Invalid data throws a `ValidationException` before anything is rendered. Beyond that, `invoice()` throws
+`Twig\Error\Error` for template errors and `GotenbergException` for rendering failures; see [Errors](#errors).
 
 ### xrechnung()
 
@@ -124,8 +119,7 @@ the constructor's rules.
 
 ## Defaults
 
-Both `Belegwerk` and `Template` take `defaults`. They are merged with PHP's `array_replace_recursive()`, lowest
-priority first:
+Both `Belegwerk` and `Template` take `defaults`. They are merged, lowest priority first:
 
 1. `defaults` of the `Template`
 2. `defaults` of `Belegwerk`

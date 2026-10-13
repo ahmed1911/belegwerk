@@ -13,8 +13,10 @@ services:
       - "127.0.0.1:3000:3000"
 
   # PDF/A validator for the test suite (VERAPDF_URL); not needed at runtime.
+  # Starts only with `docker compose --profile test up -d`.
   verapdf:
     image: verapdf/rest:latest
+    profiles: [test]
     platform: linux/amd64
     ports:
       - "127.0.0.1:3001:8080"

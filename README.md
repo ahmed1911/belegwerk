@@ -84,9 +84,7 @@ complete example.
   attachments
 - [Security](docs/security.md): Gotenberg settings, what the template sandbox does and does not limit, reading
   untrusted invoices
-- [Validating e-invoices](docs/validation.md): what belegwerk checks, the KoSIT validator, tested cases, what is not
-  supported
-- [Development](docs/development.md): running the tests, CI, project layout
+- [Validating e-invoices](docs/validation.md): what belegwerk checks, the KoSIT validator, what is not supported
 
 ## License
 

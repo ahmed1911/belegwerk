@@ -46,12 +46,10 @@ What the sandbox does not limit:
 
 `read()` is built for files from outside:
 
-- The XML is parsed with `LIBXML_NONET` and without `LIBXML_NOENT`, `LIBXML_DTDLOAD` and `LIBXML_PARSEHUGE`: no
-  external entities, no DTDs, no network access, and libxml's limits against entity expansion bombs stay active. Keep
-  libxml2 up to date; the protection comes from the library.
-- `read()` runs no external program and does not render anything. Embedded PDF files are found by a PHP parser
-  (smalot/pdfparser). A large or crafted PDF can still use a lot of CPU and memory, so limit the upload size and run
-  `read()` under `max_execution_time` and `memory_limit`.
+- XML is parsed without network access and without loading external entities or DTDs; libxml2's limits against
+  entity expansion bombs stay active. Keep libxml2 up to date, the protection comes from the library.
+- `read()` runs no external program and renders nothing. A large or crafted PDF can still use a lot of CPU and memory,
+  so limit the upload size and run `read()` under `max_execution_time` and `memory_limit`.
 - Attachment contents are decoded but never written to disk. `filename` and `mime` are what the sender states,
   unchecked and unsanitized; see [Attachments](reading-e-invoices.md#attachments).
 - The result contains text from the invoice. Escape it when you print it. Templates do that automatically.
