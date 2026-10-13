@@ -16,8 +16,10 @@ Start Gotenberg with these flags (as in [`compose.yaml`](../compose.yaml)):
 Fonts and images go in as `data:` URIs, so no network access is needed. Without these flags, a template can run
 JavaScript and make Chromium request internal URLs.
 
-Gotenberg has no authentication. Keep it reachable only from your application, never publicly. `compose.yaml` binds it
-to `127.0.0.1`.
+Without `--api-enable-basic-auth`, Gotenberg accepts every request. Keep it reachable only from your application, never
+publicly; `compose.yaml` binds it to `127.0.0.1`. If other hosts can reach it, enable basic auth (credentials from
+`GOTENBERG_API_BASIC_AUTH_USERNAME` and `GOTENBERG_API_BASIC_AUTH_PASSWORD`) and put the credentials into the URL,
+percent-encoded with `rawurlencode()`: `new Belegwerk('http://user:password@gotenberg:3000')`.
 
 ## Templates
 

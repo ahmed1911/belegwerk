@@ -15,7 +15,7 @@ new Belegwerk(
 
 | Parameter | Description |
 | --- | --- |
-| `gotenbergUrl` | Base URL of Gotenberg 8. A trailing slash is ignored. |
+| `gotenbergUrl` | Base URL of Gotenberg 8, with credentials if basic auth is on ([Security](security.md#gotenberg-settings)). A trailing slash is ignored. |
 | `defaults` | Data merged into every `invoice()`, `xrechnung()` and `document()` call, e.g. `seller`, `bank` and `custom.logo`. See [Defaults](#defaults). |
 | `timeout` | Seconds PHP waits for Gotenberg per request (default 60). |
 
