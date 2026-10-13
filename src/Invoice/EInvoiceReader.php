@@ -65,7 +65,7 @@ final class EInvoiceReader
         }
 
         $document = new DOMDocument();
-        // No network access and no entity substitution, the content comes from outside.
+        // No network access and no external entities (internal ones are expanded), the content comes from outside.
         if ($content === '' || !@$document->loadXML($content, LIBXML_NONET)) {
             throw new ReadException('Not a PDF and not well-formed XML.');
         }

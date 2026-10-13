@@ -154,7 +154,7 @@ final class Belegwerk
 
     /**
      * Reads an incoming e-invoice: XRechnung or ZUGFeRD/Factur-X, as CII or UBL XML or as a PDF with embedded XML.
-     * Returns the invoice with the amounts it states, with keys like the template context; see the README.
+     * Returns the invoice with the amounts it states, with keys like the template context; see docs/reading-e-invoices.md.
      *
      * @throws Invoice\ReadException if the content is no e-invoice
      */
